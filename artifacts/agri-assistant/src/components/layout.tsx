@@ -1,7 +1,10 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, CloudSun, Sprout, TrendingUp, MessageSquare, MapPin, Settings } from "lucide-react";
+import { LayoutDashboard, CloudSun, Sprout, TrendingUp, MessageSquare, MapPin, Settings, Menu, X } from "lucide-react";
 import { useLocationStore } from "@/hooks/use-location";
+import { useSettings } from "@/hooks/use-settings";
+import { COUNTRIES } from "@/lib/country-data";
 import { Input } from "@/components/ui/input";
+import { useState } from "react";
 
 const NAV_ITEMS = [
   { href: "/", icon: LayoutDashboard, label: "Dashboard" },
@@ -15,98 +18,174 @@ const NAV_ITEMS = [
 export function Layout({ children }: { children: React.ReactNode }) {
   const [locationPath] = useLocation();
   const { location, setLocation } = useLocationStore();
+  const { settings } = useSettings();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const selectedCountry = COUNTRIES.find(c => c.code === settings.countryCode);
+
+  const SidebarContent = () => (
+    <>
+      <div className="p-6 border-b border-border/40">
+        <div className="flex items-center gap-3 font-bold text-xl text-primary">
+          <div className="h-9 w-9 rounded-xl bg-primary/10 flex items-center justify-center">
+            <Sprout className="h-5 w-5 text-primary" />
+          </div>
+          <span>AgriAssist</span>
+        </div>
+        <p className="text-xs text-muted-foreground mt-1.5">Smart farming command centre</p>
+      </div>
+
+      <div className="px-4 py-3 border-b border-border/40">
+        <div className="relative">
+          <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            value={location}
+            onChange={(e) => setLocation(e.target.value)}
+            className="pl-8 bg-muted/50 border-transparent focus-visible:ring-primary focus-visible:bg-background h-9 rounded-xl text-sm"
+            placeholder="Your location..."
+          />
+        </div>
+        {selectedCountry && (
+          <div className="flex items-center gap-1.5 mt-2 px-1 text-xs text-muted-foreground">
+            <span>{selectedCountry.flag}</span>
+            <span>{selectedCountry.name}</span>
+            <span className="ml-auto font-mono text-primary/80">{selectedCountry.currencySymbol}</span>
+          </div>
+        )}
+      </div>
+
+      <nav className="flex-1 px-3 py-3 space-y-1 overflow-y-auto">
+        {NAV_ITEMS.map((item) => {
+          const isActive = locationPath === item.href;
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              onClick={() => setMobileMenuOpen(false)}
+              className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium text-sm ${
+                isActive
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
+              }`}
+            >
+              <item.icon className={`h-4.5 w-4.5 shrink-0 ${isActive ? "opacity-100" : "opacity-60"}`} />
+              {item.label}
+            </Link>
+          );
+        })}
+      </nav>
+    </>
+  );
 
   return (
     <div className="flex h-[100dvh] w-full bg-background text-foreground overflow-hidden">
-      {/* Sidebar for Desktop */}
-      <aside className="hidden md:flex w-72 flex-col border-r bg-card h-full shrink-0">
-        <div className="p-6">
-          <div className="flex items-center gap-3 font-bold text-2xl text-primary">
-            <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center">
-              <Sprout className="h-6 w-6 text-primary" />
-            </div>
-            <span>AgriAssist</span>
-          </div>
-          <p className="text-sm text-muted-foreground mt-2">Smart farming command centre</p>
-        </div>
-
-        <div className="px-6 pb-6">
-          <div className="relative">
-            <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input 
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              className="pl-9 bg-muted/50 border-transparent focus-visible:ring-primary focus-visible:bg-background transition-colors h-11 rounded-xl"
-              placeholder="Your Location..."
-            />
-          </div>
-        </div>
-
-        <nav className="flex-1 px-4 space-y-1.5 overflow-y-auto">
-          {NAV_ITEMS.map((item) => {
-            const isActive = locationPath === item.href;
-            return (
-              <Link 
-                key={item.href} 
-                href={item.href} 
-                className={`flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all font-medium ${
-                  isActive 
-                    ? 'bg-primary text-primary-foreground shadow-sm shadow-primary/20 scale-[1.02]' 
-                    : 'text-muted-foreground hover:bg-muted hover:text-foreground hover:scale-[1.01]'
-                }`}
-              >
-                <item.icon className={`h-5 w-5 ${isActive ? 'opacity-100' : 'opacity-70'}`} />
-                {item.label}
-              </Link>
-            );
-          })}
-        </nav>
+      {/* Desktop/Tablet Sidebar (md+) */}
+      <aside className="hidden md:flex md:w-60 lg:w-72 flex-col border-r bg-card h-full shrink-0">
+        <SidebarContent />
       </aside>
+
+      {/* Mobile Slide-over Menu */}
+      {mobileMenuOpen && (
+        <div className="md:hidden fixed inset-0 z-50 flex">
+          <div
+            className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            onClick={() => setMobileMenuOpen(false)}
+          />
+          <aside className="relative w-72 max-w-[85vw] bg-card h-full flex flex-col shadow-2xl animate-in slide-in-from-left duration-300">
+            <div className="absolute top-4 right-4">
+              <button
+                onClick={() => setMobileMenuOpen(false)}
+                className="h-8 w-8 rounded-full bg-muted flex items-center justify-center"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <SidebarContent />
+          </aside>
+        </div>
+      )}
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-w-0 h-full">
         {/* Mobile Header */}
-        <header className="md:hidden flex-none flex items-center justify-between p-4 border-b bg-card z-10 shadow-sm">
-          <div className="flex items-center gap-2 font-bold text-lg text-primary">
-            <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center">
-              <Sprout className="h-5 w-5 text-primary" />
+        <header className="md:hidden flex-none flex items-center justify-between px-4 py-3 border-b bg-card z-10 shadow-sm">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setMobileMenuOpen(true)}
+              className="h-9 w-9 rounded-xl bg-muted flex items-center justify-center"
+            >
+              <Menu className="h-5 w-5 text-muted-foreground" />
+            </button>
+            <div className="flex items-center gap-2 font-bold text-base text-primary">
+              <div className="h-7 w-7 rounded-lg bg-primary/10 flex items-center justify-center">
+                <Sprout className="h-4 w-4 text-primary" />
+              </div>
+              AgriAssist
             </div>
-            AgriAssist
           </div>
-          <div className="relative w-36">
-            <MapPin className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-            <Input 
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              className="h-9 pl-8 text-xs bg-muted/50 border-transparent rounded-lg"
-              placeholder="Location..."
-            />
+
+          <div className="flex items-center gap-2">
+            {selectedCountry && (
+              <span className="text-lg" title={selectedCountry.name}>{selectedCountry.flag}</span>
+            )}
+            <div className="relative w-32">
+              <MapPin className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
+              <Input
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                className="h-8 pl-7 text-xs bg-muted/50 border-transparent rounded-lg"
+                placeholder="Location..."
+              />
+            </div>
           </div>
         </header>
 
+        {/* Tablet Sub-header (md only) — breadcrumb / current page */}
+        <div className="hidden md:flex lg:hidden items-center px-5 py-2 border-b bg-card/50 text-xs text-muted-foreground gap-2">
+          {selectedCountry && (
+            <>
+              <span>{selectedCountry.flag} {selectedCountry.name}</span>
+              <span>·</span>
+              <span className="font-mono text-primary/80">{selectedCountry.currencySymbol} {settings.currency}</span>
+              <span>·</span>
+            </>
+          )}
+          <span className="capitalize">{settings.weightUnit.replace("_", " ")} pricing</span>
+        </div>
+
         <div className="flex-1 overflow-y-auto relative pb-20 md:pb-0">
-          <div className="p-4 md:p-8 max-w-6xl mx-auto w-full min-h-full">
+          <div className="p-4 md:p-6 lg:p-8 max-w-6xl mx-auto w-full min-h-full">
             {children}
           </div>
         </div>
 
-        {/* Bottom Nav for Mobile */}
-        <nav className="md:hidden fixed bottom-0 left-0 right-0 border-t bg-card/95 backdrop-blur-md flex justify-around p-2 pb-safe z-50 shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">
-          {NAV_ITEMS.slice(0, 5).map((item) => {
-            const isActive = locationPath === item.href;
-            return (
-              <Link 
-                key={item.href} 
-                href={item.href} 
-                className={`flex flex-col items-center gap-1.5 p-2 min-w-[64px] transition-colors rounded-lg ${
-                  isActive ? 'text-primary' : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                <item.icon className={`h-5 w-5 ${isActive ? 'fill-primary/20' : ''}`} />
-                <span className="text-[10px] font-medium">{item.label}</span>
-              </Link>
-            );
-          })}
+        {/* Bottom Tab Bar — Mobile only */}
+        <nav className="md:hidden fixed bottom-0 left-0 right-0 border-t bg-card/95 backdrop-blur-md z-40 shadow-[0_-2px_16px_rgba(0,0,0,0.06)]">
+          <div className="flex justify-around px-1 pt-2 pb-safe pb-2">
+            {NAV_ITEMS.slice(0, 5).map((item) => {
+              const isActive = locationPath === item.href;
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={`flex flex-col items-center gap-1 py-1 px-3 rounded-xl transition-all min-w-[56px] ${
+                    isActive
+                      ? "text-primary"
+                      : "text-muted-foreground"
+                  }`}
+                >
+                  <div className={`h-7 w-7 flex items-center justify-center rounded-xl transition-all ${
+                    isActive ? "bg-primary/10" : ""
+                  }`}>
+                    <item.icon className={`h-5 w-5 ${isActive ? "fill-primary/20" : ""}`} />
+                  </div>
+                  <span className={`text-[10px] font-medium ${isActive ? "text-primary" : "text-muted-foreground"}`}>
+                    {item.label}
+                  </span>
+                </Link>
+              );
+            })}
+          </div>
         </nav>
       </main>
     </div>

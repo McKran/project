@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { LocationProvider } from "@/hooks/use-location";
+import { SettingsProvider, useSettings } from "@/hooks/use-settings";
 import { Layout } from "@/components/layout";
 
 import Dashboard from "@/pages/dashboard";
@@ -11,6 +12,7 @@ import Crops from "@/pages/crops";
 import Market from "@/pages/market";
 import Chat from "@/pages/chat";
 import Settings from "@/pages/settings";
+import Onboarding from "@/pages/onboarding";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient();
@@ -29,17 +31,31 @@ function Router() {
   );
 }
 
+function AppInner() {
+  const { settings } = useSettings();
+
+  if (!settings.onboardingCompleted) {
+    return <Onboarding />;
+  }
+
+  return (
+    <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
+      <Layout>
+        <Router />
+      </Layout>
+    </WouterRouter>
+  );
+}
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <LocationProvider>
-          <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-            <Layout>
-              <Router />
-            </Layout>
-          </WouterRouter>
-        </LocationProvider>
+        <SettingsProvider>
+          <LocationProvider>
+            <AppInner />
+          </LocationProvider>
+        </SettingsProvider>
         <Toaster />
       </TooltipProvider>
     </QueryClientProvider>
