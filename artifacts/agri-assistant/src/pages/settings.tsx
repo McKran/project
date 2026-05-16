@@ -103,13 +103,27 @@ export default function Settings() {
       <SettingsGroup title="Location & Region">
         <SettingsRow
           icon={MapPin}
-          label="Farm Location"
-          description="Used for weather and crop data"
+          label="City / Town"
+          description="Your nearest city for live weather"
           control={
             <Input
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
+              value={settings.cityName ?? ""}
+              onChange={(e) => updateSettings({ cityName: e.target.value })}
               className="h-8 w-36 text-right border-transparent bg-muted/50 focus-visible:bg-background text-sm"
+              placeholder="Enter city..."
+            />
+          }
+        />
+        <SettingsRow
+          icon={MapPin}
+          label="Region / Province"
+          description="State, province, or region"
+          control={
+            <Input
+              value={settings.regionName ?? ""}
+              onChange={(e) => updateSettings({ regionName: e.target.value, stateName: e.target.value })}
+              className="h-8 w-36 text-right border-transparent bg-muted/50 focus-visible:bg-background text-sm"
+              placeholder="Enter region..."
             />
           }
         />
@@ -144,6 +158,18 @@ export default function Settings() {
             </Badge>
           }
           control={<div />}
+        />
+        <SettingsRow
+          icon={MapPin}
+          label="Weather Location"
+          description="Override for weather queries"
+          control={
+            <Input
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+              className="h-8 w-36 text-right border-transparent bg-muted/50 focus-visible:bg-background text-sm"
+            />
+          }
         />
       </SettingsGroup>
 

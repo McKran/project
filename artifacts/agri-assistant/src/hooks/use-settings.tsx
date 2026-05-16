@@ -7,6 +7,9 @@ export type { WeightUnit, TargetMarket };
 export interface AppSettings {
   onboardingCompleted: boolean;
   countryCode: string;
+  regionName: string;
+  stateName: string;
+  cityName: string;
   currency: string;
   weightUnit: WeightUnit;
   preferredCrops: string[];
@@ -17,6 +20,9 @@ export interface AppSettings {
 const DEFAULT_SETTINGS: AppSettings = {
   onboardingCompleted: false,
   countryCode: "KE",
+  regionName: "",
+  stateName: "",
+  cityName: "",
   currency: "KES",
   weightUnit: "kilogram",
   preferredCrops: [],
@@ -24,7 +30,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   theme: "system",
 };
 
-const STORAGE_KEY = "agri_settings_v2";
+const STORAGE_KEY = "agri_settings_v3";
 
 function loadSettings(): AppSettings {
   try {
@@ -46,6 +52,7 @@ interface SettingsContextType {
   formatPrice: (usdPricePerTon: number) => string;
   currencySymbol: string;
   unitLabel: string;
+  fullLocationLabel: string;
 }
 
 const SettingsContext = createContext<SettingsContextType | undefined>(undefined);
@@ -103,8 +110,16 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     return `${currencySymbol}${formatted}`;
   };
 
+  const country = getCountryByCode(settings.countryCode);
+  const parts = [
+    settings.cityName,
+    settings.stateName || settings.regionName,
+    country?.name,
+  ].filter(Boolean);
+  const fullLocationLabel = parts.join(", ");
+
   return (
-    <SettingsContext.Provider value={{ settings, updateSettings, completeOnboarding, resetOnboarding, formatPrice, currencySymbol, unitLabel }}>
+    <SettingsContext.Provider value={{ settings, updateSettings, completeOnboarding, resetOnboarding, formatPrice, currencySymbol, unitLabel, fullLocationLabel }}>
       {children}
     </SettingsContext.Provider>
   );

@@ -1,24 +1,68 @@
 import { Router } from "express";
+import { openai } from "@workspace/integrations-openai-ai-server";
 import { GetDashboardSummaryQueryParams } from "@workspace/api-zod";
 
 const router = Router();
 
-function getWeatherForLocation(location: string) {
+const WMO_CONDITIONS: Record<number, string> = {
+  0: "Clear Sky", 1: "Mainly Clear", 2: "Partly Cloudy", 3: "Overcast",
+  45: "Foggy", 51: "Light Drizzle", 61: "Light Rain", 63: "Moderate Rain",
+  65: "Heavy Rain", 80: "Rain Showers", 95: "Thunderstorm",
+};
+
+async function fetchLiveWeatherForDashboard(location: string) {
+  try {
+    const geoRes = await fetch(
+      `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1&language=en&format=json`,
+      { signal: AbortSignal.timeout(5000) }
+    );
+    if (!geoRes.ok) return null;
+    const geoData: any = await geoRes.json();
+    const geo = geoData.results?.[0];
+    if (!geo) return null;
+
+    const wxRes = await fetch(
+      `https://api.open-meteo.com/v1/forecast?latitude=${geo.latitude}&longitude=${geo.longitude}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code,apparent_temperature,precipitation,uv_index&timezone=auto`,
+      { signal: AbortSignal.timeout(8000) }
+    );
+    if (!wxRes.ok) return null;
+    const wxData: any = await wxRes.json();
+    const c = wxData.current;
+    const code = c.weather_code ?? 0;
+    const condition = WMO_CONDITIONS[code] ?? "Partly Cloudy";
+    return {
+      location,
+      temperature: Math.round(c.temperature_2m ?? 20),
+      humidity: Math.round(c.relative_humidity_2m ?? 60),
+      rainfall: Math.round((c.precipitation ?? 0) * 10) / 10,
+      condition,
+      windSpeed: Math.round(c.wind_speed_10m ?? 10),
+      feelsLike: Math.round(c.apparent_temperature ?? 18),
+      uvIndex: Math.round(c.uv_index ?? 5),
+      updatedAt: new Date().toISOString(),
+      isLive: true,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function getWeatherFallback(location: string) {
   const seed = location.length;
   const temp = 18 + (seed % 15);
-  const humidity = 55 + (seed % 35);
-  const conditions = ["Sunny", "Partly Cloudy", "Cloudy", "Light Rain", "Clear"];
+  const conditions = ["Partly Cloudy", "Mainly Clear", "Light Rain", "Clear Sky", "Overcast"];
   const condition = conditions[seed % conditions.length];
   return {
     location,
     temperature: temp,
-    humidity,
+    humidity: 55 + (seed % 35),
     rainfall: condition.includes("Rain") ? 2.5 : 0,
     condition,
     windSpeed: 8 + (seed % 12),
     feelsLike: temp - 2,
     uvIndex: 6 + (seed % 5),
     updatedAt: new Date().toISOString(),
+    isLive: false,
   };
 }
 
@@ -30,14 +74,11 @@ const FARMING_TIPS = [
   "Keep detailed farm records — yields, costs, and weather — to make better decisions each season.",
   "Intercropping legumes with cereals improves nitrogen content and overall farm productivity.",
   "Irrigate in the early morning to minimize evaporation and reduce fungal disease risk.",
-];
-
-const MARKET_ALERTS = [
-  "Coffee prices up 12% — strong export demand from Europe driving the surge.",
-  "Bean prices rising — consider holding stock if storage conditions allow.",
-  "Tomato market tight — good time to sell, prices at seasonal high.",
-  "Maize prices climbing ahead of the planting season — secure inputs early.",
-  "Tea auction prices stable — steady demand from traditional markets.",
+  "Use cover crops during the off-season to prevent soil erosion and fix nitrogen.",
+  "Monitor commodity market prices weekly to choose the best selling window for your harvest.",
+  "Healthy soils produce healthy crops — invest in compost and organic matter addition.",
+  "Join a farmer cooperative to access better input prices and collective marketing power.",
+  "GPS-based precision agriculture can reduce input costs by 15-20% on large farms.",
 ];
 
 router.get("/dashboard/summary", async (req, res) => {
@@ -45,17 +86,43 @@ router.get("/dashboard/summary", async (req, res) => {
   const location = (parsed.success && parsed.data.location) ? parsed.data.location : "Nairobi, Kenya";
 
   try {
-    const weather = getWeatherForLocation(location);
-    const tipIndex = new Date().getDate() % FARMING_TIPS.length;
-    const alertIndex = new Date().getDate() % MARKET_ALERTS.length;
-    const hasAlert = weather.rainfall > 0 || weather.windSpeed > 15;
+    const weather = (await fetchLiveWeatherForDashboard(location)) ?? getWeatherFallback(location);
+
+    let cropRec = "Analyze your local season — consult Crops tab for recommendations";
+    let marketAlert = "Check the Market tab for live commodity prices in your region";
+    let aiTip = FARMING_TIPS[new Date().getDate() % FARMING_TIPS.length];
+
+    try {
+      const aiPrompt = `You are an expert agronomist. Given the location "${location}" and current date ${new Date().toDateString()}, respond with a JSON object with exactly these 3 fields:
+{
+  "cropRecommendation": "one sentence naming 1-2 best crops to focus on now and why",
+  "marketAlert": "one sentence about a current market opportunity or risk for this region",
+  "farmingTip": "one practical, specific farming tip for this region and season"
+}
+No markdown, just the JSON.`;
+
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        max_tokens: 300,
+        messages: [{ role: "user", content: aiPrompt }],
+      });
+
+      const text = completion.choices[0]?.message?.content ?? "{}";
+      const cleaned = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+      const ai = JSON.parse(cleaned);
+      cropRec = ai.cropRecommendation ?? cropRec;
+      marketAlert = ai.marketAlert ?? marketAlert;
+      aiTip = ai.farmingTip ?? aiTip;
+    } catch {}
+
+    const alertCount = (weather.rainfall > 5 ? 1 : 0) + (weather.windSpeed > 30 ? 1 : 0) + ((weather as any).condition?.includes("Thunderstorm") ? 1 : 0);
 
     res.json({
       weather,
-      topCropRecommendation: "Maize and Beans — optimal planting window open now",
-      marketAlert: MARKET_ALERTS[alertIndex],
-      farmingTip: FARMING_TIPS[tipIndex],
-      alertCount: hasAlert ? 2 : 0,
+      topCropRecommendation: cropRec,
+      marketAlert,
+      farmingTip: aiTip,
+      alertCount,
     });
   } catch (err) {
     req.log.error({ err }, "Error fetching dashboard summary");

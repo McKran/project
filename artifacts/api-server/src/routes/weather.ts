@@ -8,50 +8,78 @@ import {
 
 const router = Router();
 
-function getWeatherForLocation(location: string) {
+const WMO_CONDITIONS: Record<number, string> = {
+  0: "Clear Sky", 1: "Mainly Clear", 2: "Partly Cloudy", 3: "Overcast",
+  45: "Foggy", 48: "Icy Fog",
+  51: "Light Drizzle", 53: "Drizzle", 55: "Heavy Drizzle",
+  61: "Light Rain", 63: "Moderate Rain", 65: "Heavy Rain",
+  71: "Light Snow", 73: "Moderate Snow", 75: "Heavy Snow", 77: "Snow Grains",
+  80: "Rain Showers", 81: "Moderate Showers", 82: "Violent Showers",
+  85: "Snow Showers", 86: "Heavy Snow Showers",
+  95: "Thunderstorm", 96: "Thunderstorm with Hail", 99: "Severe Thunderstorm",
+};
+
+const FARMING_NOTES: Record<string, string> = {
+  "Clear Sky": "Excellent conditions for field work and harvesting",
+  "Mainly Clear": "Good day for planting and soil preparation",
+  "Partly Cloudy": "Ideal for transplanting seedlings",
+  "Overcast": "Good for irrigation and fertilizer application",
+  "Foggy": "Monitor for fungal disease development",
+  "Light Drizzle": "Delay pesticide application",
+  "Drizzle": "Good soil moisture — delay spraying",
+  "Heavy Drizzle": "Check drainage in low-lying fields",
+  "Light Rain": "Good natural irrigation — monitor drainage",
+  "Moderate Rain": "Delay field operations — check drainage",
+  "Heavy Rain": "Stay off fields, risk of soil compaction",
+  "Rain Showers": "Intermittent — plan short field tasks",
+  "Moderate Showers": "Delay pesticide and fertilizer application",
+  "Violent Showers": "Do not operate machinery — flooding risk",
+  "Thunderstorm": "Stay indoors — do not operate equipment",
+  "Light Snow": "Protect frost-sensitive crops",
+  "Moderate Snow": "Cover sensitive crops, check irrigation pipes",
+};
+
+function getFarmingNote(condition: string): string {
+  return FARMING_NOTES[condition] ?? "Monitor crops and adjust operations to conditions";
+}
+
+async function geocodeLocation(location: string): Promise<{ lat: number; lon: number; name: string } | null> {
+  try {
+    const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1&language=en&format=json`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return null;
+    const data: any = await res.json();
+    const result = data.results?.[0];
+    if (!result) return null;
+    return { lat: result.latitude, lon: result.longitude, name: result.name };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchLiveWeather(lat: number, lon: number) {
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code,apparent_temperature,precipitation,uv_index&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=auto&forecast_days=7`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  if (!res.ok) throw new Error("Weather fetch failed");
+  return await res.json() as any;
+}
+
+function getWeatherFallback(location: string) {
   const seed = location.length;
   const temp = 18 + (seed % 15);
-  const humidity = 55 + (seed % 35);
-  const conditions = ["Sunny", "Partly Cloudy", "Cloudy", "Light Rain", "Clear"];
+  const conditions = ["Partly Cloudy", "Mainly Clear", "Light Rain", "Clear Sky", "Overcast"];
   const condition = conditions[seed % conditions.length];
   return {
     location,
     temperature: temp,
-    humidity,
+    humidity: 55 + (seed % 35),
     rainfall: condition.includes("Rain") ? 2.5 : 0,
     condition,
     windSpeed: 8 + (seed % 12),
     feelsLike: temp - 2,
     uvIndex: 6 + (seed % 5),
     updatedAt: new Date().toISOString(),
-  };
-}
-
-function getDayForecast(location: string, daysAhead: number) {
-  const conditions = ["Sunny", "Partly Cloudy", "Cloudy", "Light Rain", "Clear", "Windy", "Overcast"];
-  const farmingNotes = [
-    "Ideal for planting and field work",
-    "Good conditions for irrigation",
-    "Monitor crops for wind stress",
-    "Delay pesticide application",
-    "Excellent harvest conditions",
-    "Good for soil preparation",
-    "Check drainage systems",
-  ];
-  const seed = location.length + daysAhead;
-  const condition = conditions[seed % conditions.length];
-  const date = new Date();
-  date.setDate(date.getDate() + daysAhead);
-  const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  return {
-    date: date.toISOString().split("T")[0],
-    dayName: daysAhead === 0 ? "Today" : daysAhead === 1 ? "Tomorrow" : dayNames[date.getDay()],
-    high: 22 + (seed % 12),
-    low: 12 + (seed % 8),
-    condition,
-    humidity: 50 + (seed % 40),
-    rainfall: condition.includes("Rain") ? 3 + (seed % 8) : 0,
-    farmingNote: farmingNotes[seed % farmingNotes.length],
+    isLive: false,
   };
 }
 
@@ -59,11 +87,29 @@ router.get("/weather/current", async (req, res) => {
   const parsed = GetWeatherQueryParams.safeParse(req.query);
   const location = (parsed.success && parsed.data.location) ? parsed.data.location : "Nairobi, Kenya";
   try {
-    const weather = getWeatherForLocation(location);
-    res.json(weather);
+    const geo = await geocodeLocation(location);
+    if (!geo) {
+      return res.json(getWeatherFallback(location));
+    }
+    const raw = await fetchLiveWeather(geo.lat, geo.lon);
+    const c = raw.current;
+    const code = c.weather_code ?? 0;
+    const condition = WMO_CONDITIONS[code] ?? "Partly Cloudy";
+    res.json({
+      location,
+      temperature: Math.round(c.temperature_2m ?? 20),
+      humidity: Math.round(c.relative_humidity_2m ?? 60),
+      rainfall: Math.round((c.precipitation ?? 0) * 10) / 10,
+      condition,
+      windSpeed: Math.round(c.wind_speed_10m ?? 10),
+      feelsLike: Math.round(c.apparent_temperature ?? 18),
+      uvIndex: Math.round(c.uv_index ?? 5),
+      updatedAt: new Date().toISOString(),
+      isLive: true,
+    });
   } catch (err) {
-    req.log.error({ err }, "Error fetching weather");
-    res.status(500).json({ error: "Failed to fetch weather data" });
+    req.log.error({ err }, "Error fetching live weather, using fallback");
+    res.json(getWeatherFallback(location));
   }
 });
 
@@ -71,10 +117,53 @@ router.get("/weather/forecast", async (req, res) => {
   const parsed = GetWeatherForecastQueryParams.safeParse(req.query);
   const location = (parsed.success && parsed.data.location) ? parsed.data.location : "Nairobi, Kenya";
   try {
-    const forecast = Array.from({ length: 7 }, (_, i) => getDayForecast(location, i));
+    const geo = await geocodeLocation(location);
+    if (!geo) {
+      const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      const fallback = Array.from({ length: 7 }, (_, i) => {
+        const date = new Date();
+        date.setDate(date.getDate() + i);
+        const seed = location.length + i;
+        const conditions = ["Partly Cloudy", "Mainly Clear", "Light Rain", "Overcast", "Clear Sky", "Moderate Rain", "Mainly Clear"];
+        const condition = conditions[seed % conditions.length];
+        return {
+          date: date.toISOString().split("T")[0],
+          dayName: i === 0 ? "Today" : i === 1 ? "Tomorrow" : dayNames[date.getDay()],
+          high: 22 + (seed % 10),
+          low: 12 + (seed % 8),
+          condition,
+          humidity: 50 + (seed % 40),
+          rainfall: condition.includes("Rain") ? 3 + (seed % 8) : 0,
+          farmingNote: getFarmingNote(condition),
+        };
+      });
+      return res.json(fallback);
+    }
+
+    const raw = await fetchLiveWeather(geo.lat, geo.lon);
+    const daily = raw.daily;
+    const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+    const forecast = (daily.time as string[]).map((dateStr: string, i: number) => {
+      const date = new Date(dateStr);
+      const code = (daily.weather_code as number[])[i] ?? 0;
+      const condition = WMO_CONDITIONS[code] ?? "Partly Cloudy";
+      const rainfall = (daily.precipitation_sum as number[])[i] ?? 0;
+      return {
+        date: dateStr,
+        dayName: i === 0 ? "Today" : i === 1 ? "Tomorrow" : dayNames[date.getDay()],
+        high: Math.round((daily.temperature_2m_max as number[])[i] ?? 25),
+        low: Math.round((daily.temperature_2m_min as number[])[i] ?? 15),
+        condition,
+        humidity: 55,
+        rainfall: Math.round(rainfall * 10) / 10,
+        farmingNote: getFarmingNote(condition),
+      };
+    });
+
     res.json(forecast);
   } catch (err) {
-    req.log.error({ err }, "Error fetching forecast");
+    req.log.error({ err }, "Error fetching live forecast");
     res.status(500).json({ error: "Failed to fetch forecast" });
   }
 });
@@ -83,23 +172,35 @@ router.get("/weather/farming-advice", async (req, res) => {
   const parsed = GetFarmingAdviceQueryParams.safeParse(req.query);
   const location = (parsed.success && parsed.data.location) ? parsed.data.location : "Nairobi, Kenya";
   const crop = (parsed.success && parsed.data.crop) ? parsed.data.crop : "";
-  try {
-    const weather = getWeatherForLocation(location);
-    const prompt = `You are an expert agricultural advisor. Based on the following weather conditions for ${location}, provide concise farming advice${crop ? ` specifically for ${crop}` : ""}.
 
-Weather: ${weather.condition}, Temperature: ${weather.temperature}°C, Humidity: ${weather.humidity}%, Wind: ${weather.windSpeed} km/h, Rainfall: ${weather.rainfall}mm
+  try {
+    const geo = await geocodeLocation(location);
+    let weatherDesc = "Partly Cloudy, 22°C, 65% humidity, 10 km/h wind";
+    if (geo) {
+      try {
+        const raw = await fetchLiveWeather(geo.lat, geo.lon);
+        const c = raw.current;
+        const code = c.weather_code ?? 0;
+        const condition = WMO_CONDITIONS[code] ?? "Partly Cloudy";
+        weatherDesc = `${condition}, ${Math.round(c.temperature_2m ?? 22)}°C, ${Math.round(c.relative_humidity_2m ?? 65)}% humidity, ${Math.round(c.wind_speed_10m ?? 10)} km/h wind, ${Math.round((c.precipitation ?? 0) * 10) / 10}mm precipitation`;
+      } catch {}
+    }
+
+    const prompt = `You are an expert agricultural advisor. Based on the following LIVE weather conditions for ${location}, provide concise farming advice${crop ? ` specifically for ${crop}` : ""}.
+
+Live Weather: ${weatherDesc}
 
 Respond ONLY with a JSON object (no markdown) with this exact structure:
 {
   "location": "${location}",
-  "advice": "2-3 sentences of overall farming advice",
-  "urgentAlerts": ["alert1 if any", "alert2 if any"],
-  "recommendations": ["recommendation1", "recommendation2", "recommendation3"]
+  "advice": "2-3 sentences of overall farming advice based on these conditions",
+  "urgentAlerts": ["alert1 if any critical condition", "alert2 if any"],
+  "recommendations": ["specific recommendation1", "recommendation2", "recommendation3"]
 }`;
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-5.1",
-      max_completion_tokens: 500,
+      model: "gpt-4o-mini",
+      max_tokens: 500,
       messages: [{ role: "user", content: prompt }],
     });
 
@@ -111,7 +212,7 @@ Respond ONLY with a JSON object (no markdown) with this exact structure:
     req.log.error({ err }, "Error getting farming advice");
     res.json({
       location,
-      advice: "Weather conditions are favorable for general farming activities. Monitor soil moisture levels and adjust irrigation accordingly.",
+      advice: "Weather conditions are currently being analyzed. Monitor soil moisture levels and adjust irrigation accordingly.",
       urgentAlerts: [],
       recommendations: [
         "Check soil moisture before irrigation",

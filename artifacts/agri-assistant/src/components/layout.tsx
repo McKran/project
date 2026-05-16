@@ -18,10 +18,11 @@ const NAV_ITEMS = [
 export function Layout({ children }: { children: React.ReactNode }) {
   const [locationPath] = useLocation();
   const { location, setLocation } = useLocationStore();
-  const { settings } = useSettings();
+  const { settings, fullLocationLabel } = useSettings();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const selectedCountry = COUNTRIES.find(c => c.code === settings.countryCode);
+  const displayLocation = fullLocationLabel || location || selectedCountry?.name || "Location";
 
   const SidebarContent = () => (
     <>
@@ -140,17 +141,25 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        {/* Tablet Sub-header (md only) — breadcrumb / current page */}
-        <div className="hidden md:flex lg:hidden items-center px-5 py-2 border-b bg-card/50 text-xs text-muted-foreground gap-2">
-          {selectedCountry && (
-            <>
-              <span>{selectedCountry.flag} {selectedCountry.name}</span>
-              <span>·</span>
-              <span className="font-mono text-primary/80">{selectedCountry.currencySymbol} {settings.currency}</span>
-              <span>·</span>
-            </>
-          )}
-          <span className="capitalize">{settings.weightUnit.replace("_", " ")} pricing</span>
+        {/* Desktop Top Bar (md+) */}
+        <div className="hidden md:flex items-center justify-between px-5 py-2 border-b bg-card/50">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            {selectedCountry && (
+              <>
+                <span>{selectedCountry.flag} {selectedCountry.name}</span>
+                <span>·</span>
+                <span className="font-mono text-primary/80">{selectedCountry.currencySymbol} {settings.currency}</span>
+                <span>·</span>
+              </>
+            )}
+            <span className="capitalize">{settings.weightUnit.replace("_", " ")} pricing</span>
+          </div>
+
+          {/* Location Badge — top-right */}
+          <div className="flex items-center gap-1.5 bg-primary/8 border border-primary/20 rounded-full px-3 py-1 text-xs font-medium text-primary/90">
+            <MapPin className="h-3 w-3 text-primary shrink-0" />
+            <span className="max-w-[220px] truncate" title={displayLocation}>{displayLocation}</span>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto relative pb-20 md:pb-0">

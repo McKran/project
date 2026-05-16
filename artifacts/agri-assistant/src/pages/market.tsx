@@ -19,9 +19,18 @@ export default function Market() {
   const isMobile = useIsMobile();
   const [category, setCategory] = useState<string>("all");
 
+  const locationStr = settings.cityName
+    ? [settings.cityName, settings.regionName, settings.countryCode].filter(Boolean).join(", ")
+    : location;
+
+  const priceParams = {
+    ...(category !== "all" ? { category } : {}),
+    ...(locationStr ? { location: locationStr } : {}),
+  };
+
   const { data: prices, isLoading: isPricesLoading } = useGetMarketPrices(
-    category !== "all" ? { category } : undefined,
-    { query: { queryKey: getGetMarketPricesQueryKey(category !== "all" ? { category } : undefined) } }
+    priceParams,
+    { query: { queryKey: getGetMarketPricesQueryKey(priceParams) } }
   );
 
   const { data: trends, isLoading: isTrendsLoading } = useGetMarketTrends(
@@ -95,10 +104,15 @@ export default function Market() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Categories</SelectItem>
-              <SelectItem value="cereals">Cereals</SelectItem>
+              <SelectItem value="cereals">Cereals & Grains</SelectItem>
               <SelectItem value="vegetables">Vegetables</SelectItem>
               <SelectItem value="fruits">Fruits</SelectItem>
+              <SelectItem value="legumes">Legumes & Pulses</SelectItem>
+              <SelectItem value="tubers">Tubers & Roots</SelectItem>
               <SelectItem value="cash-crops">Cash Crops</SelectItem>
+              <SelectItem value="oilseeds">Oilseeds</SelectItem>
+              <SelectItem value="spices">Spices & Herbs</SelectItem>
+              <SelectItem value="nuts">Nuts</SelectItem>
             </SelectContent>
           </Select>
         </div>

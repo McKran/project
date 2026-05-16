@@ -1,21 +1,28 @@
 import { useState } from "react";
-import { Sprout, Globe, Wheat, ShoppingCart, Check, ChevronRight, ArrowLeft, Scale } from "lucide-react";
+import { Sprout, Globe, Wheat, ShoppingCart, Check, ChevronRight, ArrowLeft, Scale, MapPin, Building2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { COUNTRIES, CROP_OPTIONS, WEIGHT_UNIT_LABELS } from "@/lib/country-data";
+import { COUNTRIES, CROP_OPTIONS, WEIGHT_UNIT_LABELS, COUNTRY_REGIONS, getRegionsForCountry } from "@/lib/country-data";
 import type { WeightUnit, TargetMarket } from "@/lib/country-data";
 import { useSettings } from "@/hooks/use-settings";
+import { useLocationStore } from "@/hooks/use-location";
 
 const STEPS = [
   { id: 1, label: "Country", icon: Globe },
-  { id: 2, label: "Crops", icon: Wheat },
-  { id: 3, label: "Market", icon: ShoppingCart },
+  { id: 2, label: "Region", icon: MapPin },
+  { id: 3, label: "City", icon: Building2 },
+  { id: 4, label: "Crops", icon: Wheat },
+  { id: 5, label: "Market", icon: ShoppingCart },
 ];
 
 export default function Onboarding() {
   const { completeOnboarding } = useSettings();
+  const { setLocation } = useLocationStore();
   const [step, setStep] = useState(1);
   const [countryCode, setCountryCode] = useState("KE");
   const [search, setSearch] = useState("");
+  const [regionName, setRegionName] = useState("");
+  const [stateName, setStateName] = useState("");
+  const [cityName, setCityName] = useState("");
   const [preferredCrops, setPreferredCrops] = useState<string[]>([]);
   const [targetMarket, setTargetMarket] = useState<TargetMarket>("local");
   const [weightUnit, setWeightUnit] = useState<WeightUnit>("kilogram");
@@ -26,6 +33,9 @@ export default function Onboarding() {
     c.region.toLowerCase().includes(search.toLowerCase())
   );
 
+  const regions = getRegionsForCountry(countryCode);
+  const hasRegions = regions.length > 0;
+
   const toggleCrop = (name: string) => {
     setPreferredCrops(prev =>
       prev.includes(name) ? prev.filter(c => c !== name) : [...prev, name]
@@ -33,8 +43,14 @@ export default function Onboarding() {
   };
 
   const handleFinish = () => {
+    const fullLocation = [cityName, stateName || regionName, selectedCountry?.name].filter(Boolean).join(", ");
+    if (fullLocation) setLocation(fullLocation);
+
     completeOnboarding({
       countryCode,
+      regionName,
+      stateName,
+      cityName,
       currency: selectedCountry?.currency ?? "USD",
       preferredCrops,
       targetMarket,
@@ -45,10 +61,22 @@ export default function Onboarding() {
   const canProceed = step === 1
     ? !!countryCode
     : step === 2
+    ? true
+    : step === 3
+    ? true
+    : step === 4
     ? preferredCrops.length > 0
     : true;
 
   const cropCategories = [...new Set(CROP_OPTIONS.map(c => c.category))];
+
+  const handleCountrySelect = (code: string) => {
+    setCountryCode(code);
+    setRegionName("");
+    setStateName("");
+    setCityName("");
+    setSearch("");
+  };
 
   return (
     <div className="min-h-[100dvh] w-full bg-gradient-to-br from-green-50 via-background to-emerald-50 dark:from-green-950/20 dark:via-background dark:to-emerald-950/10 flex items-center justify-center p-4">
@@ -68,22 +96,22 @@ export default function Onboarding() {
         </div>
 
         {/* Step Indicator */}
-        <div className="flex items-center justify-center gap-2 mb-8">
+        <div className="flex items-center justify-center gap-1 mb-8 flex-wrap">
           {STEPS.map((s, i) => {
             const isActive = step === s.id;
             const isDone = step > s.id;
             return (
-              <div key={s.id} className="flex items-center gap-2">
-                <div className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all ${
+              <div key={s.id} className="flex items-center gap-1">
+                <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
                   isActive ? "bg-primary text-primary-foreground shadow-sm" :
                   isDone ? "bg-primary/20 text-primary" :
                   "bg-muted text-muted-foreground"
                 }`}>
-                  {isDone ? <Check className="h-3.5 w-3.5" /> : <s.icon className="h-3.5 w-3.5" />}
+                  {isDone ? <Check className="h-3 w-3" /> : <s.icon className="h-3 w-3" />}
                   <span className="hidden sm:inline">{s.label}</span>
                 </div>
                 {i < STEPS.length - 1 && (
-                  <div className={`w-8 h-px ${step > s.id ? "bg-primary" : "bg-muted"} transition-colors`} />
+                  <div className={`w-4 h-px ${step > s.id ? "bg-primary" : "bg-muted"} transition-colors`} />
                 )}
               </div>
             );
@@ -115,7 +143,7 @@ export default function Onboarding() {
                   return (
                     <button
                       key={country.code}
-                      onClick={() => setCountryCode(country.code)}
+                      onClick={() => handleCountrySelect(country.code)}
                       className={`w-full flex items-center justify-between p-3.5 rounded-xl text-left transition-all ${
                         isSelected
                           ? "bg-primary/10 border border-primary/30 text-primary"
@@ -156,8 +184,110 @@ export default function Onboarding() {
             </div>
           )}
 
-          {/* Step 2: Crops */}
+          {/* Step 2: Region / Province / State */}
           {step === 2 && (
+            <div className="p-6 sm:p-8">
+              <h1 className="text-2xl font-bold mb-1">Select your region</h1>
+              <p className="text-muted-foreground mb-6">
+                Choose your province, state, or region in {selectedCountry?.name} for more precise local data.
+              </p>
+
+              {hasRegions ? (
+                <div className="h-72 overflow-y-auto space-y-1 pr-1">
+                  {regions.map(r => {
+                    const isSelected = regionName === r.name;
+                    return (
+                      <button
+                        key={r.code}
+                        onClick={() => { setRegionName(r.name); setStateName(r.name); }}
+                        className={`w-full flex items-center justify-between p-3.5 rounded-xl text-left transition-all border ${
+                          isSelected
+                            ? "bg-primary/10 border-primary/30 text-primary"
+                            : "hover:bg-muted/60 border-transparent"
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className={`h-8 w-8 rounded-lg flex items-center justify-center ${isSelected ? "bg-primary text-primary-foreground" : "bg-muted"}`}>
+                            <MapPin className="h-4 w-4" />
+                          </div>
+                          <div className="font-medium text-sm">{r.name}</div>
+                        </div>
+                        {isSelected && <Check className="h-4 w-4 text-primary shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-sm text-muted-foreground">Type your region, province, or state name:</p>
+                  <input
+                    type="text"
+                    placeholder="e.g. Oromia, Kigali Province, Northern Region..."
+                    value={regionName}
+                    onChange={e => { setRegionName(e.target.value); setStateName(e.target.value); }}
+                    className="w-full px-4 py-3 rounded-xl border bg-muted/40 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:bg-background transition-colors"
+                  />
+                </div>
+              )}
+
+              {!hasRegions || regionName ? null : (
+                <p className="text-xs text-muted-foreground mt-3 text-center">You can skip this step and continue</p>
+              )}
+
+              {regionName && (
+                <div className="mt-4 p-3 bg-primary/5 border border-primary/20 rounded-xl flex items-center gap-3">
+                  <MapPin className="h-4 w-4 text-primary shrink-0" />
+                  <span className="text-sm font-medium">{regionName}, {selectedCountry?.name}</span>
+                  <Check className="h-4 w-4 text-primary ml-auto shrink-0" />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Step 3: City */}
+          {step === 3 && (
+            <div className="p-6 sm:p-8">
+              <h1 className="text-2xl font-bold mb-1">Your nearest city or town</h1>
+              <p className="text-muted-foreground mb-6">
+                This lets us fetch precise weather forecasts and local market prices for your exact area.
+              </p>
+              <div className="space-y-3">
+                <input
+                  type="text"
+                  placeholder={`e.g. ${selectedCountry?.code === "KE" ? "Nakuru" : selectedCountry?.code === "NG" ? "Ibadan" : selectedCountry?.code === "IN" ? "Pune" : "Enter city name"}`}
+                  value={cityName}
+                  onChange={e => setCityName(e.target.value)}
+                  className="w-full px-4 py-3 rounded-xl border bg-muted/40 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:bg-background transition-colors"
+                  autoFocus
+                />
+                <p className="text-xs text-muted-foreground px-1">
+                  Enter the city or town closest to your farm. This is used only for weather and market data — you can change it anytime.
+                </p>
+              </div>
+
+              {cityName && (
+                <div className="mt-4 p-4 bg-primary/5 border border-primary/20 rounded-2xl">
+                  <div className="flex items-center gap-3">
+                    <Building2 className="h-5 w-5 text-primary shrink-0" />
+                    <div>
+                      <div className="font-semibold text-sm">{cityName}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {[regionName, selectedCountry?.name].filter(Boolean).join(", ")}
+                      </div>
+                    </div>
+                    <Check className="h-4 w-4 text-primary ml-auto shrink-0" />
+                  </div>
+                </div>
+              )}
+
+              {!cityName && (
+                <p className="text-xs text-muted-foreground mt-4 text-center">You can skip this and use country-level data</p>
+              )}
+            </div>
+          )}
+
+          {/* Step 4: Crops */}
+          {step === 4 && (
             <div className="p-6 sm:p-8">
               <h1 className="text-2xl font-bold mb-1">What do you grow?</h1>
               <p className="text-muted-foreground mb-6">
@@ -200,8 +330,8 @@ export default function Onboarding() {
             </div>
           )}
 
-          {/* Step 3: Market + Weight Unit */}
-          {step === 3 && (
+          {/* Step 5: Market + Weight Unit */}
+          {step === 5 && (
             <div className="p-6 sm:p-8">
               <h1 className="text-2xl font-bold mb-1">Market setup</h1>
               <p className="text-muted-foreground mb-6">
@@ -258,9 +388,6 @@ export default function Onboarding() {
                       </button>
                     ))}
                   </div>
-                  <p className="text-xs text-muted-foreground mt-2 ml-1">
-                    Defaults to kilogram. You can change this anytime in Settings.
-                  </p>
                 </div>
 
                 <div className="bg-muted/40 rounded-2xl p-4 text-sm space-y-2">
@@ -269,6 +396,18 @@ export default function Onboarding() {
                     <span className="text-muted-foreground">Country</span>
                     <span className="font-medium">{selectedCountry?.flag} {selectedCountry?.name}</span>
                   </div>
+                  {regionName && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Region</span>
+                      <span className="font-medium">{regionName}</span>
+                    </div>
+                  )}
+                  {cityName && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">City</span>
+                      <span className="font-medium">{cityName}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">Currency</span>
                     <span className="font-medium">{selectedCountry?.currencySymbol} {selectedCountry?.currency}</span>
@@ -295,7 +434,7 @@ export default function Onboarding() {
             ) : (
               <div />
             )}
-            {step < 3 ? (
+            {step < 5 ? (
               <Button
                 onClick={() => setStep(s => s + 1)}
                 disabled={!canProceed}
