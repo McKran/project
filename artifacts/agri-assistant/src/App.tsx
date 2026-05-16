@@ -10,6 +10,7 @@ import Weather from "@/pages/weather";
 import Crops from "@/pages/crops";
 import Market from "@/pages/market";
 import Chat from "@/pages/chat";
+import Settings from "@/pages/settings";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient();
@@ -22,6 +23,7 @@ function Router() {
       <Route path="/crops" component={Crops} />
       <Route path="/market" component={Market} />
       <Route path="/chat" component={Chat} />
+      <Route path="/settings" component={Settings} />
       <Route component={NotFound} />
     </Switch>
   );

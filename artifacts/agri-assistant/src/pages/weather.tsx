@@ -4,9 +4,8 @@ import {
   useGetWeatherForecast, getGetWeatherForecastQueryKey,
   useGetFarmingAdvice, getGetFarmingAdviceQueryKey
 } from "@workspace/api-client-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Cloud, Droplets, Wind, Sun, AlertCircle } from "lucide-react";
+import { Cloud, Droplets, Wind, Sun, MapPin, AlertCircle, Info, Umbrella, Sunrise } from "lucide-react";
 
 export default function Weather() {
   const { location } = useLocationStore();
@@ -26,152 +25,164 @@ export default function Weather() {
     { query: { queryKey: getGetFarmingAdviceQueryKey({ location }) } }
   );
 
-  if (isCurrentLoading || isForecastLoading || isAdviceLoading) {
+  if (isCurrentLoading || isForecastLoading) {
     return (
-      <div className="space-y-6">
-        <h1 className="text-2xl font-bold">Weather & Advice</h1>
-        <Skeleton className="h-48 w-full rounded-xl" />
-        <Skeleton className="h-64 w-full rounded-xl" />
+      <div className="space-y-6 max-w-4xl mx-auto">
+        <Skeleton className="h-[400px] w-full rounded-[2.5rem]" />
+        <Skeleton className="h-[200px] w-full rounded-3xl" />
+        <Skeleton className="h-[400px] w-full rounded-3xl" />
       </div>
     );
   }
 
-  if (!current || !forecast || !advice) {
-    return (
-      <div className="p-8 text-center text-destructive">
-        <h2 className="text-lg font-semibold">Failed to load weather data</h2>
-      </div>
-    );
-  }
+  if (!current || !forecast) return null;
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Weather & Advice</h1>
-        <p className="text-muted-foreground mt-1">Current conditions and farming outlook for {location}</p>
-      </div>
+    <div className="space-y-6 max-w-4xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-700 pb-12">
+      
+      {/* Apple Weather Style Hero */}
+      <div className="relative rounded-[2.5rem] bg-gradient-to-b from-sky-400 to-sky-600 dark:from-sky-800 dark:to-indigo-950 text-white overflow-hidden shadow-xl border border-white/10">
+        {/* Abstract clouds/sun overlay */}
+        <div className="absolute top-10 right-10 w-64 h-64 bg-white/20 rounded-full blur-3xl"></div>
+        <div className="absolute bottom-10 left-10 w-48 h-48 bg-white/10 rounded-full blur-2xl"></div>
 
-      <div className="grid md:grid-cols-3 gap-6">
-        {/* Current Weather */}
-        <Card className="md:col-span-1 bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-950 dark:to-slate-900 border-none">
-          <CardContent className="p-6">
-            <div className="flex justify-between items-start">
-              <div>
-                <div className="text-5xl font-bold">{current.temperature}°C</div>
-                <div className="text-lg font-medium mt-1 capitalize text-blue-900 dark:text-blue-200">{current.condition}</div>
-                <div className="text-sm text-blue-700 dark:text-blue-300 mt-1">Feels like {current.feelsLike}°C</div>
-              </div>
-              <Cloud className="h-12 w-12 text-blue-500 opacity-80" />
+        <div className="relative z-10 flex flex-col items-center justify-center p-12 text-center min-h-[360px]">
+          <div className="text-2xl font-medium tracking-wide drop-shadow-sm">{location}</div>
+          <div className="text-8xl font-light tracking-tighter my-2 drop-shadow-md">{current.temperature}°</div>
+          <div className="text-xl font-medium capitalize drop-shadow-sm text-sky-100">{current.condition}</div>
+          <div className="flex gap-4 mt-2 text-sky-100 font-medium">
+            <span>H:{Math.max(...forecast.map(f => f.high))}°</span>
+            <span>L:{Math.min(...forecast.map(f => f.low))}°</span>
+          </div>
+        </div>
+
+        {/* Scrollable stats strip */}
+        <div className="relative z-10 border-t border-white/20 bg-black/10 backdrop-blur-xl">
+          <div className="flex overflow-x-auto p-6 gap-8 hide-scrollbar snap-x px-8">
+            <div className="flex flex-col items-center gap-3 shrink-0 snap-center">
+              <span className="text-sm text-sky-100">Humidity</span>
+              <Droplets className="h-6 w-6 text-white" />
+              <span className="font-semibold text-lg">{current.humidity}%</span>
             </div>
-
-            <div className="grid grid-cols-2 gap-4 mt-8 pt-4 border-t border-blue-200/50 dark:border-blue-800/50">
-              <div className="flex items-center gap-2">
-                <Droplets className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-                <div>
-                  <div className="text-sm font-medium">{current.humidity}%</div>
-                  <div className="text-xs opacity-80">Humidity</div>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Wind className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-                <div>
-                  <div className="text-sm font-medium">{current.windSpeed} km/h</div>
-                  <div className="text-xs opacity-80">Wind</div>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Droplets className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-                <div>
-                  <div className="text-sm font-medium">{current.rainfall} mm</div>
-                  <div className="text-xs opacity-80">Rainfall</div>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Sun className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-                <div>
-                  <div className="text-sm font-medium">{current.uvIndex}</div>
-                  <div className="text-xs opacity-80">UV Index</div>
-                </div>
-              </div>
+            <div className="flex flex-col items-center gap-3 shrink-0 snap-center">
+              <span className="text-sm text-sky-100">Wind</span>
+              <Wind className="h-6 w-6 text-white" />
+              <span className="font-semibold text-lg">{current.windSpeed} <span className="text-sm font-normal">km/h</span></span>
             </div>
-          </CardContent>
-        </Card>
-
-        {/* AI Advice */}
-        <div className="md:col-span-2 space-y-4">
-          <Card className="border-l-4 border-l-primary h-full">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <AlertCircle className="h-5 w-5 text-primary" />
-                Agronomist Advice
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm leading-relaxed mb-4">{advice.advice}</p>
-              
-              {advice.urgentAlerts.length > 0 && (
-                <div className="mb-4">
-                  <h4 className="text-sm font-semibold text-destructive mb-2">Urgent Actions</h4>
-                  <ul className="space-y-1">
-                    {advice.urgentAlerts.map((alert, i) => (
-                      <li key={i} className="text-sm flex items-start gap-2 text-destructive/90">
-                        <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-destructive shrink-0" />
-                        {alert}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {advice.recommendations.length > 0 && (
-                <div>
-                  <h4 className="text-sm font-semibold text-primary mb-2">Recommendations</h4>
-                  <ul className="space-y-1">
-                    {advice.recommendations.map((rec, i) => (
-                      <li key={i} className="text-sm flex items-start gap-2 text-muted-foreground">
-                        <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-primary/50 shrink-0" />
-                        {rec}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+            <div className="flex flex-col items-center gap-3 shrink-0 snap-center">
+              <span className="text-sm text-sky-100">Rainfall</span>
+              <Umbrella className="h-6 w-6 text-white" />
+              <span className="font-semibold text-lg">{current.rainfall} <span className="text-sm font-normal">mm</span></span>
+            </div>
+            <div className="flex flex-col items-center gap-3 shrink-0 snap-center">
+              <span className="text-sm text-sky-100">UV Index</span>
+              <Sun className="h-6 w-6 text-white" />
+              <span className="font-semibold text-lg">{current.uvIndex}</span>
+            </div>
+            <div className="flex flex-col items-center gap-3 shrink-0 snap-center">
+              <span className="text-sm text-sky-100">Feels Like</span>
+              <Sunrise className="h-6 w-6 text-white" />
+              <span className="font-semibold text-lg">{current.feelsLike}°</span>
+            </div>
+          </div>
         </div>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">7-Day Forecast & Notes</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="overflow-x-auto">
-            <div className="min-w-[600px] flex flex-col gap-4">
-              {forecast.map((day, i) => (
-                <div key={i} className="flex items-center gap-4 p-3 rounded-lg bg-muted/30">
-                  <div className="w-24 shrink-0">
-                    <div className="font-medium">{day.dayName}</div>
-                    <div className="text-xs text-muted-foreground">{new Date(day.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric'})}</div>
-                  </div>
-                  <div className="w-12 text-center shrink-0">
-                    <Cloud className="h-6 w-6 mx-auto text-muted-foreground" />
-                  </div>
-                  <div className="w-24 text-center shrink-0">
-                    <div className="font-semibold">{day.high}° <span className="text-muted-foreground font-normal">{day.low}°</span></div>
-                  </div>
-                  <div className="w-24 text-center shrink-0 text-sm">
-                    <span className="text-blue-500">{day.rainfall}mm</span>
-                  </div>
-                  <div className="flex-1 text-sm text-muted-foreground border-l pl-4">
-                    {day.farmingNote}
-                  </div>
-                </div>
-              ))}
+      {/* Farming Impact/Advice */}
+      <div className="bg-card rounded-3xl p-6 sm:p-8 shadow-sm border flex flex-col sm:flex-row gap-6">
+        <div className="shrink-0 h-16 w-16 bg-primary/10 rounded-2xl flex items-center justify-center">
+          <AlertCircle className="h-8 w-8 text-primary" />
+        </div>
+        <div className="flex-1">
+          <h3 className="text-lg font-bold mb-2">Agronomist Insights</h3>
+          {isAdviceLoading ? (
+            <div className="space-y-3">
+              <Skeleton className="h-4 w-full rounded-lg" />
+              <Skeleton className="h-4 w-5/6 rounded-lg" />
+              <Skeleton className="h-4 w-4/6 rounded-lg" />
             </div>
-          </div>
-        </CardContent>
-      </Card>
+          ) : advice ? (
+            <>
+              <p className="text-muted-foreground leading-relaxed">{advice.advice}</p>
+              {(advice.urgentAlerts.length > 0 || advice.recommendations.length > 0) && (
+                <div className="mt-6 grid sm:grid-cols-2 gap-6">
+                  {advice.urgentAlerts.length > 0 && (
+                    <div>
+                      <h4 className="text-sm font-bold text-destructive uppercase tracking-wider mb-3">Critical Actions</h4>
+                      <ul className="space-y-2">
+                        {advice.urgentAlerts.map((alert, i) => (
+                          <li key={i} className="flex items-start gap-2 text-sm text-destructive/90 bg-destructive/5 p-3 rounded-lg">
+                            <span className="shrink-0 h-2 w-2 rounded-full bg-destructive mt-1.5" />
+                            <span>{alert}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {advice.recommendations.length > 0 && (
+                    <div>
+                      <h4 className="text-sm font-bold text-primary uppercase tracking-wider mb-3">Recommendations</h4>
+                      <ul className="space-y-2">
+                        {advice.recommendations.map((rec, i) => (
+                          <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground bg-muted/30 p-3 rounded-lg">
+                            <span className="shrink-0 h-2 w-2 rounded-full bg-primary mt-1.5" />
+                            <span>{rec}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          ) : (
+            <p className="text-muted-foreground text-sm">AI insights unavailable right now.</p>
+          )}
+        </div>
+      </div>
+
+      {/* 7-Day Forecast */}
+      <div className="bg-card rounded-3xl p-6 sm:p-8 shadow-sm border">
+        <div className="flex items-center gap-2 text-muted-foreground font-semibold mb-6">
+          <Cloud className="h-5 w-5" />
+          <h2>7-DAY FORECAST</h2>
+        </div>
+        
+        <div className="flex flex-col divide-y divide-border/50">
+          {forecast.map((day, i) => {
+            const isToday = i === 0;
+            return (
+              <div key={i} className="py-4 flex flex-col sm:flex-row sm:items-center gap-4 group hover:bg-muted/20 -mx-4 px-4 rounded-xl transition-colors">
+                <div className="w-24 shrink-0 font-medium text-lg">
+                  {isToday ? "Today" : day.dayName}
+                </div>
+                
+                <div className="flex items-center gap-4 shrink-0 w-32">
+                  <Cloud className="h-8 w-8 text-sky-500 drop-shadow-sm" />
+                  <span className="text-sm font-medium text-blue-500">{day.rainfall > 0 ? `${day.rainfall}mm` : ''}</span>
+                </div>
+                
+                <div className="flex items-center gap-3 shrink-0 flex-1 sm:max-w-[200px]">
+                  <span className="text-muted-foreground font-medium w-6 text-right">{day.low}°</span>
+                  {/* Visual Range Bar */}
+                  <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden flex">
+                    <div className="h-full bg-gradient-to-r from-sky-400 to-amber-400 w-full opacity-70"></div>
+                  </div>
+                  <span className="font-bold w-6">{day.high}°</span>
+                </div>
+
+                <div className="flex-1 sm:text-right">
+                  <span className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full bg-primary/10 text-primary">
+                    <Info className="h-3.5 w-3.5" />
+                    {day.farmingNote}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
     </div>
   );
 }
