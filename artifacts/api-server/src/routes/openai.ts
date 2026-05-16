@@ -137,6 +137,119 @@ router.delete("/openai/conversations/:id", async (req, res) => {
   }
 });
 
+router.post("/openai/conversations/:id/welcome", async (req, res) => {
+  const paramsParsed = GetOpenaiConversationParams.safeParse(req.params);
+  if (!paramsParsed.success) {
+    res.status(400).json({ error: "Invalid conversation id" });
+    return;
+  }
+
+  const conversationId = paramsParsed.data.id;
+  const context = (req.body ?? {}) as {
+    location?: string;
+    crops?: string[];
+    targetMarket?: string;
+    cityName?: string;
+    countryName?: string;
+  };
+
+  try {
+    const [conversation] = await db
+      .select()
+      .from(conversations)
+      .where(eq(conversations.id, conversationId));
+
+    if (!conversation) {
+      res.status(404).json({ error: "Conversation not found" });
+      return;
+    }
+
+    const existingMessages = await db
+      .select()
+      .from(messages)
+      .where(eq(messages.conversationId, conversationId));
+
+    if (existingMessages.length > 0) {
+      res.status(409).json({ error: "Conversation already has messages" });
+      return;
+    }
+
+    const location = context.location || context.cityName || "your area";
+    const crops = context.crops?.length ? context.crops.join(", ") : "general crops";
+    const market = context.targetMarket ?? "local";
+
+    const welcomePrompt = `Generate a warm, concise welcome message (3–5 sentences max) for a farmer who just set up their AgriAssist profile. Their details:
+- Location: ${location}
+- Crops of interest: ${crops}
+- Target market: ${market}
+
+Greet them by confirming these settings, then briefly mention 1–2 things you can help them with right now (weather timing, market prices, pest alerts, etc.). End with a single open-ended question to start a conversation. Be friendly and practical.`;
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-store");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders();
+
+    let fullResponse = "";
+    let streamSuccess = false;
+
+    const tryStream = async (useDeepSeek: boolean): Promise<boolean> => {
+      try {
+        const client = useDeepSeek ? openrouter : openai;
+        const model = useDeepSeek ? DEEPSEEK_MODEL : FALLBACK_MODEL;
+
+        const stream = await (client as any).chat.completions.create({
+          model,
+          max_tokens: 300,
+          messages: [
+            { role: "system", content: SYSTEM_PROMPT },
+            { role: "user", content: welcomePrompt },
+          ],
+          stream: true,
+          temperature: 0.8,
+        });
+
+        for await (const chunk of stream) {
+          const content = chunk.choices[0]?.delta?.content;
+          if (content) {
+            fullResponse += content;
+            res.write(`data: ${JSON.stringify({ content })}\n\n`);
+          }
+        }
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    streamSuccess = await tryStream(true);
+    if (!streamSuccess) {
+      fullResponse = "";
+      streamSuccess = await tryStream(false);
+    }
+
+    res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+    res.end();
+
+    if (fullResponse) {
+      await db.insert(messages).values({
+        conversationId,
+        role: "assistant",
+        content: fullResponse,
+      });
+    }
+  } catch (err) {
+    req.log.error({ err }, "Error generating welcome message");
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Failed to generate welcome message" });
+    } else {
+      res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+      res.end();
+    }
+  }
+});
+
 router.post("/openai/conversations/:id/messages", async (req, res) => {
   const paramsParsed = SendOpenaiMessageParams.safeParse(req.params);
   const bodyParsed = SendOpenaiMessageBody.safeParse(req.body);

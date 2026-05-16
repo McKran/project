@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback, memo, startTransition } from "react";
 import { useLocationStore } from "@/hooks/use-location";
+import { useSettings } from "@/hooks/use-settings";
 import {
   useListOpenaiConversations, getListOpenaiConversationsQueryKey,
   useCreateOpenaiConversation,
@@ -55,12 +56,15 @@ const TYPING_DOTS = (
 
 export default function Chat() {
   const { location } = useLocationStore();
+  const { settings } = useSettings();
   const queryClient = useQueryClient();
   const [activeId, setActiveId] = useState<number | null>(null);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isInitializing, setIsInitializing] = useState(false);
+  const hasAutoInitRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const streamBufferRef = useRef("");
   const rafRef = useRef<number>(0);
@@ -77,11 +81,101 @@ export default function Chat() {
   const createConv = useCreateOpenaiConversation();
   const deleteConv = useDeleteOpenaiConversation();
 
-  useEffect(() => {
-    if (conversations && conversations.length > 0 && !activeId && !isListLoading) {
-      startTransition(() => setActiveId(conversations[0].id));
+  const flushBuffer = useCallback(() => {
+    if (streamBufferRef.current) {
+      const chunk = streamBufferRef.current;
+      streamBufferRef.current = "";
+      startTransition(() => setStreamingContent(prev => prev + chunk));
     }
-  }, [conversations, activeId, isListLoading]);
+  }, []);
+
+  const streamWelcomeMessage = useCallback(async (convId: number) => {
+    setIsStreaming(true);
+    setStreamingContent("");
+    streamBufferRef.current = "";
+
+    try {
+      const BASE = import.meta.env.BASE_URL;
+      const res = await fetch(`${BASE}api/openai/conversations/${convId}/welcome`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          location,
+          crops: settings.preferredCrops,
+          targetMarket: settings.targetMarket,
+          cityName: settings.cityName,
+        }),
+      });
+
+      if (!res.body || !res.ok) return;
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let lineBuffer = "";
+
+      const scheduleFlush = () => {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = requestAnimationFrame(flushBuffer);
+      };
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        lineBuffer += decoder.decode(value, { stream: true });
+        const lines = lineBuffer.split("\n");
+        lineBuffer = lines.pop()!;
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            try {
+              const json = JSON.parse(line.slice(6));
+              if (json.done) break;
+              if (json.content) {
+                streamBufferRef.current += json.content;
+                scheduleFlush();
+              }
+            } catch {}
+          }
+        }
+      }
+      cancelAnimationFrame(rafRef.current);
+      flushBuffer();
+    } catch (err) {
+      console.error("Welcome stream error:", err);
+    } finally {
+      setIsStreaming(false);
+      setStreamingContent("");
+      streamBufferRef.current = "";
+      queryClient.invalidateQueries({ queryKey: getGetOpenaiConversationQueryKey(convId) });
+    }
+  }, [location, settings, flushBuffer, queryClient]);
+
+  useEffect(() => {
+    if (isListLoading || hasAutoInitRef.current) return;
+
+    if (conversations && conversations.length > 0 && !activeId) {
+      startTransition(() => setActiveId(conversations[0].id));
+      return;
+    }
+
+    if (conversations && conversations.length === 0 && !isInitializing) {
+      hasAutoInitRef.current = true;
+      setIsInitializing(true);
+      createConv.mutate(
+        { data: { title: "Welcome Session" } },
+        {
+          onSuccess: async (newConv) => {
+            queryClient.invalidateQueries({ queryKey: getListOpenaiConversationsQueryKey() });
+            startTransition(() => setActiveId(newConv.id));
+            setIsInitializing(false);
+            await streamWelcomeMessage(newConv.id);
+          },
+          onError: () => {
+            setIsInitializing(false);
+          },
+        }
+      );
+    }
+  }, [conversations, activeId, isListLoading, isInitializing, createConv, queryClient, streamWelcomeMessage]);
 
   const scrollToBottom = useCallback(() => {
     if (scrollRef.current) {
@@ -118,14 +212,6 @@ export default function Chat() {
       }
     });
   }, [deleteConv, queryClient, activeId]);
-
-  const flushBuffer = useCallback(() => {
-    if (streamBufferRef.current) {
-      const chunk = streamBufferRef.current;
-      streamBufferRef.current = "";
-      startTransition(() => setStreamingContent(prev => prev + chunk));
-    }
-  }, []);
 
   const handleSend = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
@@ -291,16 +377,13 @@ export default function Chat() {
           ref={scrollRef}
           className="flex-1 overflow-y-auto p-4 md:p-6 space-y-5 overscroll-contain"
         >
-          {!activeId && !isListLoading && (
+          {!activeId && (isListLoading || isInitializing) && (
             <div className="h-full flex flex-col items-center justify-center text-center max-w-sm mx-auto space-y-4 text-muted-foreground">
               <div className="h-16 w-16 bg-primary/10 rounded-full flex items-center justify-center">
-                <Sprout className="h-8 w-8 text-primary" />
+                <Loader2 className="h-8 w-8 text-primary animate-spin" />
               </div>
-              <h2 className="text-xl font-semibold text-foreground">AI Agronomist</h2>
-              <p className="text-sm">Ask me about pest control, fertilizer application, weather impacts, market prices, or crop recommendations for your location.</p>
-              <Button onClick={handleNewChat} variant="outline" className="mt-4" disabled={createConv.isPending}>
-                Start a conversation
-              </Button>
+              <h2 className="text-xl font-semibold text-foreground">Starting your session…</h2>
+              <p className="text-sm">Your AI Agronomist is preparing a personalized welcome.</p>
             </div>
           )}
 

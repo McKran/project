@@ -2,10 +2,22 @@ import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Sprout, Globe, Wheat, ShoppingCart, Check, ChevronRight, ArrowLeft, Scale, MapPin, Building2, Search, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { COUNTRIES, CROP_OPTIONS, WEIGHT_UNIT_LABELS, getRegionsForCountry } from "@/lib/country-data";
+import { COUNTRIES, CROP_OPTIONS, WEIGHT_UNIT_LABELS } from "@/lib/country-data";
 import type { WeightUnit, TargetMarket } from "@/lib/country-data";
 import { useSettings } from "@/hooks/use-settings";
 import { useLocationStore } from "@/hooks/use-location";
+
+interface GeoRegion {
+  name: string;
+  code: string;
+}
+
+async function fetchRegions(countryCode: string, countryName: string): Promise<GeoRegion[]> {
+  const params = new URLSearchParams({ country_code: countryCode, country_name: countryName });
+  const res = await fetch(`/api/geo/regions?${params.toString()}`);
+  if (!res.ok) throw new Error("Failed to fetch regions");
+  return res.json();
+}
 
 const STEPS = [
   { id: 1, label: "Country", icon: Globe },
@@ -53,8 +65,17 @@ export default function Onboarding() {
     c.region.toLowerCase().includes(search.toLowerCase())
   );
 
-  const regions = getRegionsForCountry(countryCode);
-  const hasRegions = regions.length > 0;
+  const {
+    data: regions = [],
+    isLoading: regionsLoading,
+    error: regionsError,
+  } = useQuery<GeoRegion[]>({
+    queryKey: ["geo-regions", countryCode],
+    queryFn: () => fetchRegions(countryCode, selectedCountry?.name ?? countryCode),
+    enabled: step === 2,
+    staleTime: 24 * 60 * 60 * 1000,
+    retry: 2,
+  });
 
   const filteredRegions = useMemo(() =>
     regions.filter(r => r.name.toLowerCase().includes(regionSearch.toLowerCase())),
@@ -241,7 +262,7 @@ export default function Onboarding() {
             </div>
           )}
 
-          {/* Step 2: Region */}
+          {/* Step 2: Region — dynamically fetched from Open-Meteo geocoding */}
           {step === 2 && (
             <div className="p-6 sm:p-8">
               <h1 className="text-2xl font-bold mb-1">Select your region</h1>
@@ -249,16 +270,39 @@ export default function Onboarding() {
                 Choose your province, state, or region in {selectedCountry?.name} for more precise local data.
               </p>
 
-              {hasRegions ? (
+              {regionsLoading ? (
+                <div className="flex flex-col items-center justify-center py-16 gap-3 text-muted-foreground">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                  <p className="text-sm">Loading regions for {selectedCountry?.name}…</p>
+                </div>
+              ) : regionsError || regions.length === 0 ? (
+                <div className="space-y-4">
+                  {regionsError && (
+                    <div className="p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl text-sm text-amber-800 dark:text-amber-200">
+                      Could not load regions automatically. Enter your region manually below.
+                    </div>
+                  )}
+                  <p className="text-sm text-muted-foreground">Type your region, province, or state name:</p>
+                  <input
+                    type="text"
+                    placeholder="e.g. Oromia, Kigali Province, Northern Region..."
+                    value={regionName}
+                    onChange={e => { setRegionName(e.target.value); setStateName(e.target.value); }}
+                    className="w-full px-4 py-3 rounded-xl border bg-muted/40 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:bg-background transition-colors"
+                    autoFocus
+                  />
+                </div>
+              ) : (
                 <>
                   <div className="relative mb-3">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <input
                       type="text"
-                      placeholder="Search region..."
+                      placeholder={`Search ${regions.length} regions…`}
                       value={regionSearch}
                       onChange={e => setRegionSearch(e.target.value)}
                       className="w-full pl-9 pr-4 py-3 rounded-xl border bg-muted/40 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:bg-background transition-colors"
+                      autoFocus
                     />
                   </div>
                   <div className="h-72 overflow-y-auto space-y-1 pr-1">
@@ -284,22 +328,11 @@ export default function Onboarding() {
                         </button>
                       );
                     })}
-                    {filteredRegions.length === 0 && (
-                      <p className="text-center text-muted-foreground text-sm py-8">No regions found</p>
+                    {filteredRegions.length === 0 && regionSearch && (
+                      <p className="text-center text-muted-foreground text-sm py-8">No regions match "{regionSearch}"</p>
                     )}
                   </div>
                 </>
-              ) : (
-                <div className="space-y-3">
-                  <p className="text-sm text-muted-foreground">Type your region, province, or state name:</p>
-                  <input
-                    type="text"
-                    placeholder="e.g. Oromia, Kigali Province, Northern Region..."
-                    value={regionName}
-                    onChange={e => { setRegionName(e.target.value); setStateName(e.target.value); }}
-                    className="w-full px-4 py-3 rounded-xl border bg-muted/40 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:bg-background transition-colors"
-                  />
-                </div>
               )}
 
               {regionName && (
@@ -310,7 +343,7 @@ export default function Onboarding() {
                 </div>
               )}
 
-              {!regionName && (
+              {!regionName && !regionsLoading && (
                 <p className="text-xs text-muted-foreground mt-3 text-center">You can skip this step and continue</p>
               )}
             </div>
