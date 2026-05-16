@@ -64,6 +64,18 @@ async function fetchLiveWeather(lat: number, lon: number) {
   return await res.json() as any;
 }
 
+async function resolveCoords(
+  lat?: number,
+  lon?: number,
+  location?: string
+): Promise<{ lat: number; lon: number; name: string } | null> {
+  if (lat !== undefined && lon !== undefined && !isNaN(lat) && !isNaN(lon)) {
+    return { lat, lon, name: location ?? "Your location" };
+  }
+  if (location) return geocodeLocation(location);
+  return null;
+}
+
 function getWeatherFallback(location: string) {
   const seed = location.length;
   const temp = 18 + (seed % 15);
@@ -86,17 +98,21 @@ function getWeatherFallback(location: string) {
 router.get("/weather/current", async (req, res) => {
   const parsed = GetWeatherQueryParams.safeParse(req.query);
   const location = (parsed.success && parsed.data.location) ? parsed.data.location : "Nairobi, Kenya";
+  const lat = req.query.lat ? parseFloat(req.query.lat as string) : undefined;
+  const lon = req.query.lon ? parseFloat(req.query.lon as string) : undefined;
+
   try {
-    const geo = await geocodeLocation(location);
+    const geo = await resolveCoords(lat, lon, location);
     if (!geo) {
-      return res.json(getWeatherFallback(location));
+      res.json(getWeatherFallback(location));
+      return;
     }
     const raw = await fetchLiveWeather(geo.lat, geo.lon);
     const c = raw.current;
     const code = c.weather_code ?? 0;
     const condition = WMO_CONDITIONS[code] ?? "Partly Cloudy";
     res.json({
-      location,
+      location: geo.name || location,
       temperature: Math.round(c.temperature_2m ?? 20),
       humidity: Math.round(c.relative_humidity_2m ?? 60),
       rainfall: Math.round((c.precipitation ?? 0) * 10) / 10,
@@ -116,11 +132,15 @@ router.get("/weather/current", async (req, res) => {
 router.get("/weather/forecast", async (req, res) => {
   const parsed = GetWeatherForecastQueryParams.safeParse(req.query);
   const location = (parsed.success && parsed.data.location) ? parsed.data.location : "Nairobi, Kenya";
+  const lat = req.query.lat ? parseFloat(req.query.lat as string) : undefined;
+  const lon = req.query.lon ? parseFloat(req.query.lon as string) : undefined;
+
   try {
-    const geo = await geocodeLocation(location);
+    const geo = await resolveCoords(lat, lon, location);
     if (!geo) {
       const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
       const fallback = Array.from({ length: 7 }, (_, i) => {
+
         const date = new Date();
         date.setDate(date.getDate() + i);
         const seed = location.length + i;
@@ -137,7 +157,8 @@ router.get("/weather/forecast", async (req, res) => {
           farmingNote: getFarmingNote(condition),
         };
       });
-      return res.json(fallback);
+      res.json(fallback);
+      return;
     }
 
     const raw = await fetchLiveWeather(geo.lat, geo.lon);
@@ -172,9 +193,11 @@ router.get("/weather/farming-advice", async (req, res) => {
   const parsed = GetFarmingAdviceQueryParams.safeParse(req.query);
   const location = (parsed.success && parsed.data.location) ? parsed.data.location : "Nairobi, Kenya";
   const crop = (parsed.success && parsed.data.crop) ? parsed.data.crop : "";
+  const lat = req.query.lat ? parseFloat(req.query.lat as string) : undefined;
+  const lon = req.query.lon ? parseFloat(req.query.lon as string) : undefined;
 
   try {
-    const geo = await geocodeLocation(location);
+    const geo = await resolveCoords(lat, lon, location);
     let weatherDesc = "Partly Cloudy, 22°C, 65% humidity, 10 km/h wind";
     if (geo) {
       try {
@@ -186,20 +209,20 @@ router.get("/weather/farming-advice", async (req, res) => {
       } catch {}
     }
 
-    const prompt = `You are an expert agricultural advisor. Based on the following LIVE weather conditions for ${location}, provide concise farming advice${crop ? ` specifically for ${crop}` : ""}.
+    const prompt = `You are an expert agricultural advisor. Based on LIVE weather for ${location}${crop ? `, advise specifically on ${crop}` : ""}.
 
 Live Weather: ${weatherDesc}
 
-Respond ONLY with a JSON object (no markdown) with this exact structure:
+Respond ONLY with a JSON object (no markdown):
 {
   "location": "${location}",
-  "advice": "2-3 sentences of overall farming advice based on these conditions",
-  "urgentAlerts": ["alert1 if any critical condition", "alert2 if any"],
-  "recommendations": ["specific recommendation1", "recommendation2", "recommendation3"]
+  "advice": "2-3 sentences of practical farming advice for these exact conditions",
+  "urgentAlerts": ["critical alert if any — omit if none"],
+  "recommendations": ["specific action 1", "specific action 2", "specific action 3"]
 }`;
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: "gpt-5-mini",
       max_tokens: 500,
       messages: [{ role: "user", content: prompt }],
     });

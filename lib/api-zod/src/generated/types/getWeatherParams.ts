@@ -8,4 +8,6 @@
 
 export type GetWeatherParams = {
 location?: string;
+lat?: number;
+lon?: number;
 };

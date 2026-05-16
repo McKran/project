@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { eq } from "drizzle-orm";
 import { db, conversations, messages } from "@workspace/db";
+import { openrouter } from "@workspace/integrations-openrouter-ai";
 import { openai } from "@workspace/integrations-openai-ai-server";
 import {
   CreateOpenaiConversationBody,
@@ -12,26 +13,44 @@ import {
 
 const router = Router();
 
-const SYSTEM_PROMPT = `You are AgriBot, an expert AI agricultural assistant specializing in practical farming guidance for smallholder and commercial farmers. You have deep knowledge in:
+const DEEPSEEK_MODEL = "deepseek/deepseek-chat-v3-0324:free";
+const FALLBACK_MODEL = "meta-llama/llama-4-scout:free";
 
-- Crop selection and rotation strategies
-- Pest and disease identification and management
-- Fertilizer application and soil health
-- Irrigation scheduling and water management
-- Harvest timing and post-harvest handling
-- Weather-based farming decisions
-- Market timing and crop value optimization
-- Sustainable and regenerative farming practices
+const SYSTEM_PROMPT = `You are AgriBot, an expert AI agricultural assistant specializing in practical farming guidance for smallholder and commercial farmers worldwide. You have deep expertise in:
 
-When answering questions:
-- Be concise and actionable — farmers need clear, practical advice
-- Use local context when provided (location, season, crop type)
-- Quantify recommendations where possible (e.g., "apply 50kg/ha of CAN")
-- Flag urgent issues (pest outbreaks, weather risks) prominently
+- Crop selection, rotation, and intercropping strategies
+- Pest and disease identification, prevention, and management
+- Fertilizer application, soil health, and composting
+- Irrigation scheduling and water conservation
+- Harvest timing, post-harvest handling, and storage
+- Weather-based farming decisions and climate adaptation
+- Market timing, price negotiation, and crop value optimization
+- Sustainable, organic, and regenerative farming practices
+- Agricultural finance, input cost management, and profit planning
+
+When responding:
+- Lead with the most actionable advice first
+- Be specific: give dosages, timings, quantities (e.g., "Apply 50kg CAN/ha at knee height")
+- Use the farmer's location and crop context to tailor your answer
+- Clearly flag urgent or time-sensitive issues
 - Consider smallholder resource constraints
-- Speak directly to the farmer in a warm, knowledgeable tone
+- Use bullet points and headers for multi-part answers
+- Keep responses concise but complete — farmers are busy
 
-You are not a medical or legal advisor. Stick to agricultural topics.`;
+You are not a medical or legal advisor. Stay focused on agriculture.`;
+
+const requestTimestamps = new Map<number, number[]>();
+const MAX_REQUESTS_PER_MINUTE = 10;
+
+function isThrottled(conversationId: number): boolean {
+  const now = Date.now();
+  const oneMinuteAgo = now - 60_000;
+  const times = (requestTimestamps.get(conversationId) ?? []).filter(t => t > oneMinuteAgo);
+  requestTimestamps.set(conversationId, times);
+  if (times.length >= MAX_REQUESTS_PER_MINUTE) return true;
+  times.push(now);
+  return false;
+}
 
 router.get("/openai/conversations", async (req, res) => {
   try {
@@ -52,7 +71,6 @@ router.post("/openai/conversations", async (req, res) => {
     res.status(400).json({ error: "Invalid request body" });
     return;
   }
-
   try {
     const [conversation] = await db
       .insert(conversations)
@@ -71,7 +89,6 @@ router.get("/openai/conversations/:id", async (req, res) => {
     res.status(400).json({ error: "Invalid conversation id" });
     return;
   }
-
   try {
     const [conversation] = await db
       .select()
@@ -102,7 +119,6 @@ router.delete("/openai/conversations/:id", async (req, res) => {
     res.status(400).json({ error: "Invalid conversation id" });
     return;
   }
-
   try {
     const [deleted] = await db
       .delete(conversations)
@@ -131,8 +147,17 @@ router.post("/openai/conversations/:id/messages", async (req, res) => {
   }
 
   const conversationId = paramsParsed.data.id;
+
+  if (isThrottled(conversationId)) {
+    res.status(429).json({ error: "Too many requests. Please wait a moment before sending another message." });
+    return;
+  }
+
   const userContent = bodyParsed.data.content;
-  const context = (bodyParsed.data as { context?: { location?: string | null; currentCrop?: string | null } }).context;
+  const context = (bodyParsed.data as any).context as {
+    location?: string | null;
+    currentCrop?: string | null;
+  } | undefined;
 
   try {
     const [conversation] = await db
@@ -158,52 +183,80 @@ router.post("/openai/conversations/:id/messages", async (req, res) => {
       .orderBy(messages.createdAt);
 
     const contextNote = context?.location || context?.currentCrop
-      ? `\n\n[Farmer context: Location: ${context?.location ?? "unknown"}, Current crop focus: ${context?.currentCrop ?? "general"}]`
+      ? `\n\n[Farmer context — Location: ${context?.location ?? "unknown"}, Crop focus: ${context?.currentCrop ?? "general"}]`
       : "";
 
     const chatMessages: { role: "system" | "user" | "assistant"; content: string }[] = [
       { role: "system", content: SYSTEM_PROMPT + contextNote },
-      ...history.map((m) => ({
+      ...history.slice(-20).map((m) => ({
         role: m.role as "user" | "assistant",
         content: m.content,
       })),
     ];
 
     res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Cache-Control", "no-cache, no-store");
     res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders();
 
     let fullResponse = "";
+    let streamSuccess = false;
 
-    const stream = await openai.chat.completions.create({
-      model: "gpt-5.1",
-      max_completion_tokens: 1024,
-      messages: chatMessages,
-      stream: true,
-    });
+    const tryStream = async (useDeepSeek: boolean): Promise<boolean> => {
+      try {
+        const client = useDeepSeek ? openrouter : openai;
+        const model = useDeepSeek ? DEEPSEEK_MODEL : "gpt-5-mini";
 
-    for await (const chunk of stream) {
-      const content = chunk.choices[0]?.delta?.content;
-      if (content) {
-        fullResponse += content;
-        res.write(`data: ${JSON.stringify({ content })}\n\n`);
+        const stream = await (client as any).chat.completions.create({
+          model,
+          max_tokens: 1500,
+          messages: chatMessages,
+          stream: true,
+          temperature: 0.7,
+        });
+
+        for await (const chunk of stream) {
+          const content = chunk.choices[0]?.delta?.content;
+          if (content) {
+            fullResponse += content;
+            res.write(`data: ${JSON.stringify({ content })}\n\n`);
+          }
+        }
+        return true;
+      } catch (err: any) {
+        req.log.warn({ err, useDeepSeek }, "Stream attempt failed, will try fallback");
+        return false;
       }
+    };
+
+    streamSuccess = await tryStream(true);
+
+    if (!streamSuccess) {
+      fullResponse = "";
+      streamSuccess = await tryStream(false);
+    }
+
+    if (!streamSuccess) {
+      res.write(`data: ${JSON.stringify({ error: "AI service temporarily unavailable. Please try again." })}\n\n`);
     }
 
     res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
     res.end();
 
-    await db.insert(messages).values({
-      conversationId,
-      role: "assistant",
-      content: fullResponse,
-    });
+    if (fullResponse) {
+      await db.insert(messages).values({
+        conversationId,
+        role: "assistant",
+        content: fullResponse,
+      });
+    }
   } catch (err) {
     req.log.error({ err }, "Error in AI chat");
     if (!res.headersSent) {
       res.status(500).json({ error: "Failed to process message" });
     } else {
-      res.write(`data: ${JSON.stringify({ error: "Stream interrupted" })}\n\n`);
+      res.write(`data: ${JSON.stringify({ error: "Stream interrupted. Please try again." })}\n\n`);
       res.end();
     }
   }

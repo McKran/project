@@ -18,10 +18,31 @@ export const HealthCheckResponse = zod.object({
 
 
 /**
+ * @summary Get verified cities for a country and region
+ */
+export const GetGeoCitiesQueryParams = zod.object({
+  "country_code": zod.coerce.string(),
+  "region": zod.coerce.string().optional()
+})
+
+export const GetGeoCitiesResponseItem = zod.object({
+  "name": zod.string(),
+  "lat": zod.number(),
+  "lon": zod.number(),
+  "country_code": zod.string(),
+  "admin1": zod.string().optional(),
+  "population": zod.number().optional()
+})
+export const GetGeoCitiesResponse = zod.array(GetGeoCitiesResponseItem)
+
+
+/**
  * @summary Get current weather
  */
 export const GetWeatherQueryParams = zod.object({
-  "location": zod.coerce.string().optional()
+  "location": zod.coerce.string().optional(),
+  "lat": zod.coerce.number().optional(),
+  "lon": zod.coerce.number().optional()
 })
 
 export const GetWeatherResponse = zod.object({
@@ -41,7 +62,9 @@ export const GetWeatherResponse = zod.object({
  * @summary Get 7-day weather forecast
  */
 export const GetWeatherForecastQueryParams = zod.object({
-  "location": zod.coerce.string().optional()
+  "location": zod.coerce.string().optional(),
+  "lat": zod.coerce.number().optional(),
+  "lon": zod.coerce.number().optional()
 })
 
 export const GetWeatherForecastResponseItem = zod.object({

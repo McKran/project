@@ -6,8 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type GetWeatherForecastParams = {
-location?: string;
-lat?: number;
-lon?: number;
+export type GetGeoCitiesParams = {
+country_code: string;
+region?: string;
 };

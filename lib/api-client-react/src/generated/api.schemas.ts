@@ -56,6 +56,15 @@ export interface CalendarEvent {
   priority: string;
 }
 
+export interface GeoCity {
+  name: string;
+  lat: number;
+  lon: number;
+  country_code: string;
+  admin1?: string;
+  population?: number;
+}
+
 export interface MarketPrice {
   crop: string;
   localPrice: number;
@@ -138,12 +147,21 @@ export interface OpenaiError {
   error: string;
 }
 
+export type GetGeoCitiesParams = {
+country_code: string;
+region?: string;
+};
+
 export type GetWeatherParams = {
 location?: string;
+lat?: number;
+lon?: number;
 };
 
 export type GetWeatherForecastParams = {
 location?: string;
+lat?: number;
+lon?: number;
 };
 
 export type GetFarmingAdviceParams = {

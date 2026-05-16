@@ -1,4 +1,5 @@
 import { useLocationStore } from "@/hooks/use-location";
+import { useSettings } from "@/hooks/use-settings";
 import { 
   useGetWeather, getGetWeatherQueryKey, 
   useGetWeatherForecast, getGetWeatherForecastQueryKey,
@@ -9,15 +10,20 @@ import { Cloud, Droplets, Wind, Sun, MapPin, AlertCircle, Info, Umbrella, Sunris
 
 export default function Weather() {
   const { location } = useLocationStore();
+  const { settings } = useSettings();
+
+  const lat = settings.cityLat ?? undefined;
+  const lon = settings.cityLon ?? undefined;
+  const weatherParams = { location, ...(lat !== undefined && lon !== undefined ? { lat, lon } : {}) };
 
   const { data: current, isLoading: isCurrentLoading } = useGetWeather(
-    { location }, 
-    { query: { queryKey: getGetWeatherQueryKey({ location }) } }
+    weatherParams, 
+    { query: { queryKey: getGetWeatherQueryKey(weatherParams) } }
   );
 
   const { data: forecast, isLoading: isForecastLoading } = useGetWeatherForecast(
-    { location }, 
-    { query: { queryKey: getGetWeatherForecastQueryKey({ location }) } }
+    weatherParams, 
+    { query: { queryKey: getGetWeatherForecastQueryKey(weatherParams) } }
   );
 
   const { data: advice, isLoading: isAdviceLoading } = useGetFarmingAdvice(

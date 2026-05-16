@@ -10,6 +10,8 @@ export interface AppSettings {
   regionName: string;
   stateName: string;
   cityName: string;
+  cityLat: number | null;
+  cityLon: number | null;
   currency: string;
   weightUnit: WeightUnit;
   preferredCrops: string[];
@@ -23,6 +25,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   regionName: "",
   stateName: "",
   cityName: "",
+  cityLat: null,
+  cityLon: null,
   currency: "KES",
   weightUnit: "kilogram",
   preferredCrops: [],
@@ -30,7 +34,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   theme: "system",
 };
 
-const STORAGE_KEY = "agri_settings_v3";
+const STORAGE_KEY = "agri_settings_v4";
 
 function loadSettings(): AppSettings {
   try {

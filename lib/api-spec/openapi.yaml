@@ -36,6 +36,32 @@ paths:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
 
+  /geo/cities:
+    get:
+      operationId: getGeoCities
+      tags: [weather]
+      summary: Get verified cities for a country and region
+      parameters:
+        - name: country_code
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: region
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of cities with coordinates
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GeoCity"
+
   /weather/current:
     get:
       operationId: getWeather
@@ -47,6 +73,16 @@ paths:
           required: false
           schema:
             type: string
+        - name: lat
+          in: query
+          required: false
+          schema:
+            type: number
+        - name: lon
+          in: query
+          required: false
+          schema:
+            type: number
       responses:
         "200":
           description: Current weather data
@@ -66,6 +102,16 @@ paths:
           required: false
           schema:
             type: string
+        - name: lat
+          in: query
+          required: false
+          schema:
+            type: number
+        - name: lon
+          in: query
+          required: false
+          schema:
+            type: number
       responses:
         "200":
           description: 7-day forecast
@@ -435,6 +481,23 @@ components:
           type: integer
         priority:
           type: string
+
+    GeoCity:
+      type: object
+      required: [name, lat, lon, country_code]
+      properties:
+        name:
+          type: string
+        lat:
+          type: number
+        lon:
+          type: number
+        country_code:
+          type: string
+        admin1:
+          type: string
+        population:
+          type: number
 
     MarketPrice:
       type: object

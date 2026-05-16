@@ -25,10 +25,12 @@ import type {
   DashboardSummary,
   FarmingAdvice,
   ForecastDay,
+  GeoCity,
   GetCropCalendarParams,
   GetCropRecommendationsParams,
   GetDashboardSummaryParams,
   GetFarmingAdviceParams,
+  GetGeoCitiesParams,
   GetMarketInsightParams,
   GetMarketPricesParams,
   GetWeatherForecastParams,
@@ -123,6 +125,90 @@ export function useHealthCheck<TData = Awaited<ReturnType<typeof healthCheck>>, 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getHealthCheckQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getGetGeoCitiesUrl = (params: GetGeoCitiesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/geo/cities?${stringifiedParams}` : `/api/geo/cities`
+}
+
+/**
+ * @summary Get verified cities for a country and region
+ */
+export const getGeoCities = async (params: GetGeoCitiesParams, options?: RequestInit): Promise<GeoCity[]> => {
+
+  return customFetch<GeoCity[]>(getGetGeoCitiesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetGeoCitiesQueryKey = (params?: GetGeoCitiesParams,) => {
+    return [
+    `/api/geo/cities`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetGeoCitiesQueryOptions = <TData = Awaited<ReturnType<typeof getGeoCities>>, TError = ErrorType<unknown>>(params: GetGeoCitiesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getGeoCities>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetGeoCitiesQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getGeoCities>>> = ({ signal }) => getGeoCities(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getGeoCities>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetGeoCitiesQueryResult = NonNullable<Awaited<ReturnType<typeof getGeoCities>>>
+export type GetGeoCitiesQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get verified cities for a country and region
+ */
+
+export function useGetGeoCities<TData = Awaited<ReturnType<typeof getGeoCities>>, TError = ErrorType<unknown>>(
+ params: GetGeoCitiesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getGeoCities>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetGeoCitiesQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
