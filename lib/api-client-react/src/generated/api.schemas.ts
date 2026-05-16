@@ -64,6 +64,21 @@ export interface MarketPrice {
   trend: string;
   changePercent: number;
   category: string;
+  aiInsight?: string;
+}
+
+export interface MarketInsight {
+  crop: string;
+  currentPrice?: number;
+  priceDirection: string;
+  changePercent?: number;
+  localAnalysis: string;
+  globalAnalysis: string;
+  keyDrivers: string[];
+  futureOutlook: string;
+  seasonalNote?: string;
+  confidence: string;
+  generatedAt: string;
 }
 
 export interface MarketTrends {
@@ -147,6 +162,13 @@ month?: number;
 
 export type GetMarketPricesParams = {
 category?: string;
+location?: string;
+};
+
+export type GetMarketInsightParams = {
+crop: string;
+location?: string;
+country?: string;
 };
 
 export type GetDashboardSummaryParams = {

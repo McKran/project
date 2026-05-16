@@ -1,11 +1,13 @@
 import { Router } from "express";
 import { openai } from "@workspace/integrations-openai-ai-server";
-import { GetMarketPricesQueryParams } from "@workspace/api-zod";
+import { GetMarketPricesQueryParams, GetMarketInsightQueryParams } from "@workspace/api-zod";
 
 const router = Router();
 
 const priceCache = new Map<string, { data: any; ts: number }>();
-const CACHE_TTL = 60 * 60 * 1000;
+const insightCache = new Map<string, { data: any; ts: number }>();
+const PRICE_CACHE_TTL = 60 * 60 * 1000;
+const INSIGHT_CACHE_TTL = 30 * 60 * 1000;
 
 const GLOBAL_BASE_PRICES_USD_PER_TON: Record<string, { local: number; intl: number; category: string; unit: string }> = {
   "Maize": { local: 185, intl: 215, category: "Cereals", unit: "ton" },
@@ -91,9 +93,9 @@ function deterministicJitter(crop: string, date: string, field: string): number 
 
 async function getAIEnhancedPrices(location: string, crops: string[]): Promise<any[]> {
   const today = new Date().toISOString().split("T")[0];
-  const cacheKey = `${location}_${today}_${crops.slice(0, 5).join("_")}`;
+  const cacheKey = `prices_${location}_${today}_${crops.slice(0, 5).join("_")}`;
   const cached = priceCache.get(cacheKey);
-  if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.data;
+  if (cached && Date.now() - cached.ts < PRICE_CACHE_TTL) return cached.data;
 
   const basePricesForCrops = crops.slice(0, 20).map(crop => {
     const base = GLOBAL_BASE_PRICES_USD_PER_TON[crop];
@@ -102,63 +104,42 @@ async function getAIEnhancedPrices(location: string, crops: string[]): Promise<a
     return `${crop}: ~$${Math.round(base.local * (1 + jitter))}/ton local, ~$${Math.round(base.intl * (1 + jitter))}/ton international`;
   }).filter(Boolean).join("\n");
 
-  const prompt = `You are an expert agricultural commodity market analyst with real-time global market knowledge as of ${today}.
+  const month = new Date().toLocaleString("en", { month: "long" });
 
+  const prompt = `You are an expert agricultural commodity market analyst. Today is ${today}, month: ${month}.
 Location: ${location}
-Crops to price: ${crops.slice(0, 20).join(", ")}
-
-Base global reference prices (USD/metric ton):
+Crops: ${crops.slice(0, 20).join(", ")}
+Base reference prices (USD/metric ton):
 ${basePricesForCrops}
 
-Your task: Generate realistic, location-adjusted market prices for ${location} considering:
-- Local supply/demand dynamics for this specific region
-- Current seasonal patterns (month: ${new Date().toLocaleString("en", { month: "long" })})
-- Local transportation/infrastructure premiums or discounts
-- Regional trade flows and export demand
-- Current global commodity market trends as of today
-- Currency and purchasing power differences
+Generate realistic, location-adjusted market prices considering local supply/demand, seasonal patterns, transport costs, and current global commodity trends.
 
-Respond ONLY with a valid JSON array — no markdown, no extra text. Array of objects with exactly these fields:
-[
-  {
-    "crop": "crop name",
-    "localPrice": <number in USD per metric ton>,
-    "internationalPrice": <number in USD per metric ton>,
-    "unit": "ton",
-    "trend": "rising|stable|falling",
-    "changePercent": <number, e.g. 3.5 for rising or -2.1 for falling>,
-    "category": "category name",
-    "aiInsight": "one sentence on why this price/trend"
-  }
-]
+Respond ONLY with a valid JSON array — no markdown, no preamble:
+[{"crop":"name","localPrice":number,"internationalPrice":number,"unit":"ton","trend":"rising|stable|falling","changePercent":number,"category":"string","aiInsight":"one concise sentence"}]
 
-Be realistic and vary the trends — not everything rises. Base on actual current market conditions.`;
+Vary the trends realistically — not everything rises.`;
 
   try {
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o",
-      max_tokens: 3000,
+      model: "gpt-5-mini",
+      max_tokens: 3500,
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" },
     });
 
     const raw = completion.choices[0]?.message?.content ?? "{}";
     let parsed: any;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
+    try { parsed = JSON.parse(raw); } catch {
       const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
       parsed = JSON.parse(cleaned);
     }
 
-    const items = Array.isArray(parsed) ? parsed : (parsed.prices ?? parsed.data ?? []);
-
+    const items = Array.isArray(parsed) ? parsed : (parsed.prices ?? parsed.data ?? parsed.results ?? []);
     if (Array.isArray(items) && items.length > 0) {
       priceCache.set(cacheKey, { data: items, ts: Date.now() });
       return items;
     }
-  } catch (err) {
-  }
+  } catch {}
 
   return getFallbackPrices(crops, today);
 }
@@ -185,19 +166,91 @@ function getFallbackPrices(crops: string[], today: string) {
   }).filter(Boolean);
 }
 
+async function getAIMarketInsight(crop: string, location: string, country: string): Promise<any> {
+  const today = new Date().toISOString().split("T")[0];
+  const cacheKey = `insight_${crop}_${location}_${today}`;
+  const cached = insightCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < INSIGHT_CACHE_TTL) return cached.data;
+
+  const base = GLOBAL_BASE_PRICES_USD_PER_TON[crop];
+  const basePrice = base ? base.local : 500;
+  const month = new Date().toLocaleString("en", { month: "long" });
+
+  const prompt = `You are a senior agricultural market intelligence analyst with access to current global trade, weather, and supply chain data. Today is ${today} (${month}).
+
+Analyze the market for: ${crop}
+User location: ${location || "East Africa"}
+Country: ${country || "Kenya"}
+Current base price: ~$${basePrice} USD/metric ton
+
+Provide a comprehensive market insight report. Structure your analysis as JSON with these exact fields:
+
+{
+  "crop": "${crop}",
+  "currentPrice": <current estimated USD/metric ton>,
+  "priceDirection": "rising|stable|falling",
+  "changePercent": <percentage change from 30 days ago, positive or negative number>,
+  "localAnalysis": "<2-3 sentences specifically about ${country || "the local"} market conditions, including local supply/demand, harvest season status, local transport costs, domestic policy, or regional trade. ALWAYS address local conditions first.>",
+  "globalAnalysis": "<2-3 sentences about global market forces: international commodity exchanges, major exporting/importing countries, global supply disruptions, shipping/logistics, international trade policies, or currency effects.>",
+  "keyDrivers": ["<specific factor 1>", "<specific factor 2>", "<specific factor 3>", "<specific factor 4>"],
+  "futureOutlook": "<2-3 sentences forecasting price trajectory over next 4-8 weeks based on upcoming harvests, seasonal demand, policy announcements, or weather forecasts. Be specific and actionable.>",
+  "seasonalNote": "<1 sentence about how the current season (${month}) typically affects ${crop} prices in ${country || "this region"}.>",
+  "confidence": "low|medium|high"
+}
+
+Be specific, realistic, and prioritize LOCAL country conditions before global factors. Reference real agricultural dynamics.`;
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-5-mini",
+      max_tokens: 1200,
+      messages: [{ role: "user", content: prompt }],
+      response_format: { type: "json_object" },
+    });
+
+    const raw = completion.choices[0]?.message?.content ?? "{}";
+    let parsed: any;
+    try { parsed = JSON.parse(raw); } catch {
+      const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+      parsed = JSON.parse(cleaned);
+    }
+
+    if (parsed && parsed.crop) {
+      const result = { ...parsed, generatedAt: new Date().toISOString() };
+      insightCache.set(cacheKey, { data: result, ts: Date.now() });
+      return result;
+    }
+  } catch {}
+
+  return {
+    crop,
+    currentPrice: basePrice,
+    priceDirection: "stable",
+    changePercent: 0,
+    localAnalysis: `${crop} market conditions in ${country || "the local market"} are currently stable based on seasonal averages.`,
+    globalAnalysis: `Global ${crop} markets are tracking near long-term averages with no major disruptions reported.`,
+    keyDrivers: ["Seasonal harvest patterns", "Local demand conditions", "Transportation costs", "Currency exchange rates"],
+    futureOutlook: `${crop} prices are expected to remain near current levels in the near term pending harvest outcomes and weather conditions.`,
+    seasonalNote: `${month} is a typical period for ${crop} in this region.`,
+    confidence: "low",
+    generatedAt: new Date().toISOString(),
+  };
+}
+
 const ALL_CROPS = Object.keys(GLOBAL_BASE_PRICES_USD_PER_TON);
 
 router.get("/market/prices", async (req, res) => {
   const parsed = GetMarketPricesQueryParams.safeParse(req.query);
   const category = parsed.success && parsed.data.category ? parsed.data.category : null;
-  const location = req.query.location as string || "Global";
+  const location = (req.query.location as string) || "Global";
 
   try {
     let targetCrops = ALL_CROPS;
     if (category && category !== "all") {
+      const normalized = category.toLowerCase().replace(/[^a-z]/g, "");
       targetCrops = ALL_CROPS.filter(crop => {
         const base = GLOBAL_BASE_PRICES_USD_PER_TON[crop];
-        return base && base.category.toLowerCase().replace(/[^a-z]/g, "-") === category.toLowerCase().replace(/[^a-z]/g, "-");
+        return base && base.category.toLowerCase().replace(/[^a-z]/g, "").startsWith(normalized);
       });
     }
 
@@ -206,15 +259,30 @@ router.get("/market/prices", async (req, res) => {
   } catch (err) {
     req.log.error({ err }, "Error fetching market prices");
     const today = new Date().toISOString().split("T")[0];
-    res.json(getFallbackPrices(category ? ALL_CROPS.filter(c => {
-      const base = GLOBAL_BASE_PRICES_USD_PER_TON[c];
-      return base && base.category.toLowerCase() === (category ?? "").toLowerCase();
-    }) : ALL_CROPS, today));
+    res.json(getFallbackPrices(ALL_CROPS, today));
+  }
+});
+
+router.get("/market/insights", async (req, res) => {
+  const parsed = GetMarketInsightQueryParams.safeParse(req.query);
+  if (!parsed.success || !parsed.data.crop) {
+    res.status(400).json({ error: "crop parameter is required" });
+    return;
+  }
+
+  const { crop, location = "Global", country = "" } = parsed.data;
+
+  try {
+    const insight = await getAIMarketInsight(crop, location as string, country as string);
+    res.json(insight);
+  } catch (err) {
+    req.log.error({ err }, "Error fetching market insight");
+    res.status(500).json({ error: "Failed to generate market insight" });
   }
 });
 
 router.get("/market/trends", async (req, res) => {
-  const location = req.query.location as string || "Global";
+  const location = (req.query.location as string) || "Global";
   try {
     const topCrops = ["Coffee", "Cocoa", "Wheat", "Maize", "Soybeans", "Rice", "Cotton", "Tomatoes", "Avocado", "Palm Oil", "Groundnuts", "Bananas"];
     const prices = await getAIEnhancedPrices(location, topCrops);

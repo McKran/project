@@ -29,10 +29,12 @@ import type {
   GetCropRecommendationsParams,
   GetDashboardSummaryParams,
   GetFarmingAdviceParams,
+  GetMarketInsightParams,
   GetMarketPricesParams,
   GetWeatherForecastParams,
   GetWeatherParams,
   HealthStatus,
+  MarketInsight,
   MarketPrice,
   MarketTrends,
   OpenaiConversation,
@@ -625,6 +627,90 @@ export function useGetMarketPrices<TData = Awaited<ReturnType<typeof getMarketPr
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetMarketPricesQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getGetMarketInsightUrl = (params: GetMarketInsightParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/market/insights?${stringifiedParams}` : `/api/market/insights`
+}
+
+/**
+ * @summary Get AI-powered market insight for a specific crop
+ */
+export const getMarketInsight = async (params: GetMarketInsightParams, options?: RequestInit): Promise<MarketInsight> => {
+
+  return customFetch<MarketInsight>(getGetMarketInsightUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetMarketInsightQueryKey = (params?: GetMarketInsightParams,) => {
+    return [
+    `/api/market/insights`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetMarketInsightQueryOptions = <TData = Awaited<ReturnType<typeof getMarketInsight>>, TError = ErrorType<unknown>>(params: GetMarketInsightParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMarketInsight>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMarketInsightQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMarketInsight>>> = ({ signal }) => getMarketInsight(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMarketInsight>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetMarketInsightQueryResult = NonNullable<Awaited<ReturnType<typeof getMarketInsight>>>
+export type GetMarketInsightQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get AI-powered market insight for a specific crop
+ */
+
+export function useGetMarketInsight<TData = Awaited<ReturnType<typeof getMarketInsight>>, TError = ErrorType<unknown>>(
+ params: GetMarketInsightParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMarketInsight>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetMarketInsightQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

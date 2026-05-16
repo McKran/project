@@ -113,7 +113,8 @@ export const GetCropCalendarResponse = zod.array(GetCropCalendarResponseItem)
  * @summary Get current market prices for crops
  */
 export const GetMarketPricesQueryParams = zod.object({
-  "category": zod.coerce.string().optional()
+  "category": zod.coerce.string().optional(),
+  "location": zod.coerce.string().optional()
 })
 
 export const GetMarketPricesResponseItem = zod.object({
@@ -123,9 +124,34 @@ export const GetMarketPricesResponseItem = zod.object({
   "unit": zod.string(),
   "trend": zod.string(),
   "changePercent": zod.number(),
-  "category": zod.string()
+  "category": zod.string(),
+  "aiInsight": zod.string().optional()
 })
 export const GetMarketPricesResponse = zod.array(GetMarketPricesResponseItem)
+
+
+/**
+ * @summary Get AI-powered market insight for a specific crop
+ */
+export const GetMarketInsightQueryParams = zod.object({
+  "crop": zod.coerce.string(),
+  "location": zod.coerce.string().optional(),
+  "country": zod.coerce.string().optional()
+})
+
+export const GetMarketInsightResponse = zod.object({
+  "crop": zod.string(),
+  "currentPrice": zod.number().optional(),
+  "priceDirection": zod.string(),
+  "changePercent": zod.number().optional(),
+  "localAnalysis": zod.string(),
+  "globalAnalysis": zod.string(),
+  "keyDrivers": zod.array(zod.string()),
+  "futureOutlook": zod.string(),
+  "seasonalNote": zod.string().optional(),
+  "confidence": zod.string(),
+  "generatedAt": zod.string()
+})
 
 
 /**

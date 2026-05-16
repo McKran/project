@@ -6,7 +6,8 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type GetMarketPricesParams = {
-category?: string;
+export type GetMarketInsightParams = {
+crop: string;
 location?: string;
+country?: string;
 };

@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Link, useLocation } from "wouter";
 import { LayoutDashboard, CloudSun, Sprout, TrendingUp, MessageSquare, MapPin, Settings, Menu, X } from "lucide-react";
 import { useLocationStore } from "@/hooks/use-location";
@@ -13,18 +14,47 @@ const NAV_ITEMS = [
   { href: "/market", icon: TrendingUp, label: "Market" },
   { href: "/chat", icon: MessageSquare, label: "Ask AI" },
   { href: "/settings", icon: Settings, label: "Settings" },
-];
+] as const;
 
-export function Layout({ children }: { children: React.ReactNode }) {
-  const [locationPath] = useLocation();
-  const { location, setLocation } = useLocationStore();
-  const { settings, fullLocationLabel } = useSettings();
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+const NavLink = memo(function NavLink({
+  item,
+  isActive,
+  onClick,
+}: {
+  item: typeof NAV_ITEMS[number];
+  isActive: boolean;
+  onClick?: () => void;
+}) {
+  return (
+    <Link
+      href={item.href}
+      onClick={onClick}
+      className={`flex items-center gap-3 px-4 py-3 rounded-xl font-medium text-sm transition-colors ${
+        isActive
+          ? "bg-primary text-primary-foreground shadow-sm"
+          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+      }`}
+    >
+      <item.icon className={`h-4 w-4 shrink-0 ${isActive ? "opacity-100" : "opacity-60"}`} />
+      {item.label}
+    </Link>
+  );
+});
 
-  const selectedCountry = COUNTRIES.find(c => c.code === settings.countryCode);
-  const displayLocation = fullLocationLabel || location || selectedCountry?.name || "Location";
-
-  const SidebarContent = () => (
+function SidebarInner({
+  location,
+  setLocation,
+  selectedCountry,
+  locationPath,
+  onNavClick,
+}: {
+  location: string;
+  setLocation: (v: string) => void;
+  selectedCountry: typeof COUNTRIES[number] | undefined;
+  locationPath: string;
+  onNavClick?: () => void;
+}) {
+  return (
     <>
       <div className="p-6 border-b border-border/40">
         <div className="flex items-center gap-3 font-bold text-xl text-primary">
@@ -38,7 +68,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
       <div className="px-4 py-3 border-b border-border/40">
         <div className="relative">
-          <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
           <Input
             value={location}
             onChange={(e) => setLocation(e.target.value)}
@@ -56,52 +86,90 @@ export function Layout({ children }: { children: React.ReactNode }) {
       </div>
 
       <nav className="flex-1 px-3 py-3 space-y-1 overflow-y-auto">
-        {NAV_ITEMS.map((item) => {
-          const isActive = locationPath === item.href;
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              onClick={() => setMobileMenuOpen(false)}
-              className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium text-sm ${
-                isActive
-                  ? "bg-primary text-primary-foreground shadow-sm"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
-              }`}
-            >
-              <item.icon className={`h-4.5 w-4.5 shrink-0 ${isActive ? "opacity-100" : "opacity-60"}`} />
-              {item.label}
-            </Link>
-          );
-        })}
+        {NAV_ITEMS.map((item) => (
+          <NavLink
+            key={item.href}
+            item={item}
+            isActive={locationPath === item.href}
+            onClick={onNavClick}
+          />
+        ))}
       </nav>
     </>
   );
+}
+
+const BottomTabItem = memo(function BottomTabItem({
+  item,
+  isActive,
+}: {
+  item: typeof NAV_ITEMS[number];
+  isActive: boolean;
+}) {
+  return (
+    <Link
+      href={item.href}
+      className={`flex flex-col items-center gap-1 py-1 px-3 rounded-xl min-w-[56px] ${
+        isActive ? "text-primary" : "text-muted-foreground"
+      }`}
+    >
+      <div className={`h-7 w-7 flex items-center justify-center rounded-xl ${isActive ? "bg-primary/10" : ""}`}>
+        <item.icon className={`h-5 w-5 ${isActive ? "fill-primary/20" : ""}`} />
+      </div>
+      <span className={`text-[10px] font-medium ${isActive ? "text-primary" : "text-muted-foreground"}`}>
+        {item.label}
+      </span>
+    </Link>
+  );
+});
+
+export function Layout({ children }: { children: React.ReactNode }) {
+  const [locationPath] = useLocation();
+  const { location, setLocation } = useLocationStore();
+  const { settings, fullLocationLabel } = useSettings();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const selectedCountry = COUNTRIES.find(c => c.code === settings.countryCode);
+  const displayLocation = fullLocationLabel || location || selectedCountry?.name || "Location";
+
+  const closeMobileMenu = () => setMobileMenuOpen(false);
 
   return (
     <div className="flex h-[100dvh] w-full bg-background text-foreground overflow-hidden">
-      {/* Desktop/Tablet Sidebar (md+) */}
+      {/* Desktop Sidebar */}
       <aside className="hidden md:flex md:w-60 lg:w-72 flex-col border-r bg-card h-full shrink-0">
-        <SidebarContent />
+        <SidebarInner
+          location={location}
+          setLocation={setLocation}
+          selectedCountry={selectedCountry}
+          locationPath={locationPath}
+        />
       </aside>
 
-      {/* Mobile Slide-over Menu */}
+      {/* Mobile Slide-over */}
       {mobileMenuOpen && (
         <div className="md:hidden fixed inset-0 z-50 flex">
           <div
             className="absolute inset-0 bg-black/40 backdrop-blur-sm"
-            onClick={() => setMobileMenuOpen(false)}
+            onClick={closeMobileMenu}
           />
-          <aside className="relative w-72 max-w-[85vw] bg-card h-full flex flex-col shadow-2xl animate-in slide-in-from-left duration-300">
-            <div className="absolute top-4 right-4">
+          <aside className="relative w-72 max-w-[85vw] bg-card h-full flex flex-col shadow-2xl animate-in slide-in-from-left duration-200">
+            <div className="absolute top-4 right-4 z-10">
               <button
-                onClick={() => setMobileMenuOpen(false)}
+                onClick={closeMobileMenu}
                 className="h-8 w-8 rounded-full bg-muted flex items-center justify-center"
+                aria-label="Close menu"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <SidebarContent />
+            <SidebarInner
+              location={location}
+              setLocation={setLocation}
+              selectedCountry={selectedCountry}
+              locationPath={locationPath}
+              onNavClick={closeMobileMenu}
+            />
           </aside>
         </div>
       )}
@@ -114,6 +182,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <button
               onClick={() => setMobileMenuOpen(true)}
               className="h-9 w-9 rounded-xl bg-muted flex items-center justify-center"
+              aria-label="Open menu"
             >
               <Menu className="h-5 w-5 text-muted-foreground" />
             </button>
@@ -130,7 +199,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
               <span className="text-lg" title={selectedCountry.name}>{selectedCountry.flag}</span>
             )}
             <div className="relative w-32">
-              <MapPin className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
+              <MapPin className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground pointer-events-none" />
               <Input
                 value={location}
                 onChange={(e) => setLocation(e.target.value)}
@@ -141,7 +210,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        {/* Desktop Top Bar (md+) */}
+        {/* Desktop Top Bar */}
         <div className="hidden md:flex items-center justify-between px-5 py-2 border-b bg-card/50">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             {selectedCountry && (
@@ -155,7 +224,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <span className="capitalize">{settings.weightUnit.replace("_", " ")} pricing</span>
           </div>
 
-          {/* Location Badge — top-right */}
           <div className="flex items-center gap-1.5 bg-primary/8 border border-primary/20 rounded-full px-3 py-1 text-xs font-medium text-primary/90">
             <MapPin className="h-3 w-3 text-primary shrink-0" />
             <span className="max-w-[220px] truncate" title={displayLocation}>{displayLocation}</span>
@@ -168,32 +236,16 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
 
-        {/* Bottom Tab Bar — Mobile only */}
+        {/* Bottom Tab Bar — Mobile */}
         <nav className="md:hidden fixed bottom-0 left-0 right-0 border-t bg-card/95 backdrop-blur-md z-40 shadow-[0_-2px_16px_rgba(0,0,0,0.06)]">
           <div className="flex justify-around px-1 pt-2 pb-safe pb-2">
-            {NAV_ITEMS.slice(0, 5).map((item) => {
-              const isActive = locationPath === item.href;
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={`flex flex-col items-center gap-1 py-1 px-3 rounded-xl transition-all min-w-[56px] ${
-                    isActive
-                      ? "text-primary"
-                      : "text-muted-foreground"
-                  }`}
-                >
-                  <div className={`h-7 w-7 flex items-center justify-center rounded-xl transition-all ${
-                    isActive ? "bg-primary/10" : ""
-                  }`}>
-                    <item.icon className={`h-5 w-5 ${isActive ? "fill-primary/20" : ""}`} />
-                  </div>
-                  <span className={`text-[10px] font-medium ${isActive ? "text-primary" : "text-muted-foreground"}`}>
-                    {item.label}
-                  </span>
-                </Link>
-              );
-            })}
+            {NAV_ITEMS.slice(0, 5).map((item) => (
+              <BottomTabItem
+                key={item.href}
+                item={item}
+                isActive={locationPath === item.href}
+              />
+            ))}
           </div>
         </nav>
       </main>

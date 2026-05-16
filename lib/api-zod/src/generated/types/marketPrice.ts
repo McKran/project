@@ -14,4 +14,5 @@ export interface MarketPrice {
   trend: string;
   changePercent: number;
   category: string;
+  aiInsight?: string;
 }

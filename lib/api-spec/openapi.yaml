@@ -158,6 +158,11 @@ paths:
           required: false
           schema:
             type: string
+        - name: location
+          in: query
+          required: false
+          schema:
+            type: string
       responses:
         "200":
           description: Market prices
@@ -167,6 +172,35 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/MarketPrice"
+
+  /market/insights:
+    get:
+      operationId: getMarketInsight
+      tags: [market]
+      summary: Get AI-powered market insight for a specific crop
+      parameters:
+        - name: crop
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: location
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: country
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Detailed market insight
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketInsight"
 
   /market/trends:
     get:
@@ -419,6 +453,37 @@ components:
         changePercent:
           type: number
         category:
+          type: string
+        aiInsight:
+          type: string
+
+    MarketInsight:
+      type: object
+      required: [crop, priceDirection, localAnalysis, globalAnalysis, keyDrivers, futureOutlook, confidence, generatedAt]
+      properties:
+        crop:
+          type: string
+        currentPrice:
+          type: number
+        priceDirection:
+          type: string
+        changePercent:
+          type: number
+        localAnalysis:
+          type: string
+        globalAnalysis:
+          type: string
+        keyDrivers:
+          type: array
+          items:
+            type: string
+        futureOutlook:
+          type: string
+        seasonalNote:
+          type: string
+        confidence:
+          type: string
+        generatedAt:
           type: string
 
     MarketTrends:
