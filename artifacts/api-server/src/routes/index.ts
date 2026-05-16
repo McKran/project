@@ -4,7 +4,7 @@ import weatherRouter from "./weather";
 import cropsRouter from "./crops";
 import marketRouter from "./market";
 import dashboardRouter from "./dashboard";
-import openaiRouter from "./openai";
+import farmingPlanRouter from "./farming-plan";
 import geoRouter from "./geo";
 import psgcRouter from "./psgc";
 
@@ -15,7 +15,7 @@ router.use(weatherRouter);
 router.use(cropsRouter);
 router.use(marketRouter);
 router.use(dashboardRouter);
-router.use(openaiRouter);
+router.use(farmingPlanRouter);
 router.use(geoRouter);
 router.use(psgcRouter);
 

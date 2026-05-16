@@ -1,5 +1,27 @@
 import { Router } from "express";
-import { openai } from "@workspace/integrations-openai-ai-server";
+import { openrouter } from "@workspace/integrations-openrouter-ai";
+
+const AI_MODELS = [
+  "deepseek/deepseek-chat-v3-0324:free",
+  "meta-llama/llama-3.1-8b-instruct:free",
+  "mistralai/mistral-7b-instruct:free",
+];
+
+async function aiComplete(prompt: string, maxTokens: number): Promise<string | null> {
+  for (const model of AI_MODELS) {
+    try {
+      const resp = await (openrouter as any).chat.completions.create({
+        model,
+        max_tokens: maxTokens,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.3,
+      });
+      const content = resp.choices?.[0]?.message?.content as string | undefined;
+      if (content) return content;
+    } catch {}
+  }
+  return null;
+}
 import { GetMarketPricesQueryParams, GetMarketInsightQueryParams } from "@workspace/api-zod";
 
 const router = Router();
@@ -120,18 +142,12 @@ Respond ONLY with a valid JSON array — no markdown, no preamble:
 Vary the trends realistically — not everything rises.`;
 
   try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-5-mini",
-      max_tokens: 3500,
-      messages: [{ role: "user", content: prompt }],
-      response_format: { type: "json_object" },
-    });
-
-    const raw = completion.choices[0]?.message?.content ?? "{}";
+    const raw = await aiComplete(prompt, 3500) ?? "{}";
     let parsed: any;
     try { parsed = JSON.parse(raw); } catch {
       const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-      parsed = JSON.parse(cleaned);
+      const jsonMatch = cleaned.match(/\[[\s\S]*\]|\{[\s\S]*\}/);
+      parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : {};
     }
 
     const items = Array.isArray(parsed) ? parsed : (parsed.prices ?? parsed.data ?? parsed.results ?? []);
@@ -201,18 +217,12 @@ Provide a comprehensive market insight report. Structure your analysis as JSON w
 Be specific, realistic, and prioritize LOCAL country conditions before global factors. Reference real agricultural dynamics.`;
 
   try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-5-mini",
-      max_tokens: 1200,
-      messages: [{ role: "user", content: prompt }],
-      response_format: { type: "json_object" },
-    });
-
-    const raw = completion.choices[0]?.message?.content ?? "{}";
+    const raw = await aiComplete(prompt, 1200) ?? "{}";
     let parsed: any;
     try { parsed = JSON.parse(raw); } catch {
       const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-      parsed = JSON.parse(cleaned);
+      const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+      parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : {};
     }
 
     if (parsed && parsed.crop) {

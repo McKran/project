@@ -1,5 +1,27 @@
 import { Router } from "express";
-import { openai } from "@workspace/integrations-openai-ai-server";
+import { openrouter } from "@workspace/integrations-openrouter-ai";
+
+const AI_MODELS = [
+  "deepseek/deepseek-chat-v3-0324:free",
+  "meta-llama/llama-3.1-8b-instruct:free",
+  "mistralai/mistral-7b-instruct:free",
+];
+
+async function aiComplete(prompt: string, maxTokens: number): Promise<string | null> {
+  for (const model of AI_MODELS) {
+    try {
+      const resp = await (openrouter as any).chat.completions.create({
+        model,
+        max_tokens: maxTokens,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.4,
+      });
+      const content = resp.choices?.[0]?.message?.content as string | undefined;
+      if (content) return content;
+    } catch {}
+  }
+  return null;
+}
 import {
   GetWeatherQueryParams,
   GetWeatherForecastQueryParams,
@@ -221,14 +243,8 @@ Respond ONLY with a JSON object (no markdown):
   "recommendations": ["specific action 1", "specific action 2", "specific action 3"]
 }`;
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-5-mini",
-      max_tokens: 500,
-      messages: [{ role: "user", content: prompt }],
-    });
-
-    const text = completion.choices[0]?.message?.content ?? "{}";
-    const cleaned = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+    const text = await aiComplete(prompt, 500);
+    const cleaned = (text ?? "{}").replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
     const advice = JSON.parse(cleaned);
     res.json(advice);
   } catch (err) {

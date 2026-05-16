@@ -3,7 +3,7 @@ import { useLocationStore } from "@/hooks/use-location";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Link } from "wouter";
-import { Cloud, Sprout, TrendingUp, AlertCircle, Lightbulb, MapPin, Wind, Droplets, ChevronRight } from "lucide-react";
+import { Cloud, Sprout, TrendingUp, AlertCircle, Lightbulb, MapPin, Wind, Droplets, ChevronRight, ClipboardList } from "lucide-react";
 
 export default function Dashboard() {
   const { location } = useLocationStore();
@@ -79,7 +79,7 @@ function DesktopDashboard({ summary, location }: { summary: any; location: strin
       <div className="grid gap-6 md:grid-cols-3">
         <StatCard href="/crops" color="primary" icon={Sprout} label="Top Recommendation" value={summary.topCropRecommendation} />
         <StatCard href="/market" color="amber" icon={TrendingUp} label="Market Alert" value={summary.marketAlert} />
-        <StatCard href="/chat" color="destructive" icon={AlertCircle} label="Action Items" value={String(summary.alertCount)} isLarge />
+        <StatCard href="/farming-plan" color="plan" icon={ClipboardList} label="Farming Plans" value="Create Plan" />
       </div>
 
       <div className="bg-primary/5 border border-primary/20 rounded-[2rem] p-6 sm:p-8 flex items-start gap-6">
@@ -146,14 +146,14 @@ function MobileDashboard({ summary, location }: { summary: any; location: string
         />
       </Link>
 
-      <Link href="/chat" className="block">
+      <Link href="/farming-plan" className="block">
         <div className="bg-card border rounded-2xl p-4 flex items-center gap-4 shadow-sm active:scale-[0.98] transition-transform">
-          <div className="h-11 w-11 rounded-xl bg-destructive/10 flex items-center justify-center shrink-0">
-            <AlertCircle className="h-5 w-5 text-destructive" />
+          <div className="h-11 w-11 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+            <ClipboardList className="h-5 w-5 text-primary" />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-xs text-muted-foreground font-medium">Action Items</div>
-            <div className="text-3xl font-bold text-destructive leading-tight">{summary.alertCount}</div>
+            <div className="text-xs text-muted-foreground font-medium">Farming Plan</div>
+            <div className="font-bold text-base truncate text-primary">Create Plan</div>
           </div>
           <ChevronRight className="h-4 w-4 text-muted-foreground" />
         </div>
@@ -209,7 +209,7 @@ function StatCard({
   isLarge,
 }: {
   href: string;
-  color: "primary" | "amber" | "destructive";
+  color: "primary" | "amber" | "destructive" | "plan";
   icon: React.ElementType;
   label: string;
   value: string;
@@ -219,6 +219,7 @@ function StatCard({
     primary: { bg: "bg-primary/10", icon: "text-primary", ghost: "text-primary" },
     amber: { bg: "bg-amber-500/10", icon: "text-amber-500", ghost: "text-amber-500" },
     destructive: { bg: "bg-destructive/10", icon: "text-destructive", ghost: "text-destructive" },
+    plan: { bg: "bg-primary/10", icon: "text-primary", ghost: "text-primary" },
   };
   const c = colorMap[color];
 

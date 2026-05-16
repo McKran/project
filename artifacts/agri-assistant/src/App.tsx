@@ -12,7 +12,7 @@ const Dashboard = lazy(() => import("@/pages/dashboard"));
 const Weather = lazy(() => import("@/pages/weather"));
 const Crops = lazy(() => import("@/pages/crops"));
 const Market = lazy(() => import("@/pages/market"));
-const Chat = lazy(() => import("@/pages/chat"));
+const FarmingPlan = lazy(() => import("@/pages/farming-plan"));
 const Settings = lazy(() => import("@/pages/settings"));
 const Onboarding = lazy(() => import("@/pages/onboarding"));
 const NotFound = lazy(() => import("@/pages/not-found"));
@@ -44,7 +44,7 @@ function Router() {
         <Route path="/weather" component={Weather} />
         <Route path="/crops" component={Crops} />
         <Route path="/market" component={Market} />
-        <Route path="/chat" component={Chat} />
+        <Route path="/farming-plan" component={FarmingPlan} />
         <Route path="/settings" component={Settings} />
         <Route component={NotFound} />
       </Switch>

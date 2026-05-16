@@ -98,6 +98,7 @@ function InsightDrawer({
   country,
   currentLocalPrice,
   formatPrice,
+  unitLabel,
   trend,
   changePercent,
 }: {
@@ -108,6 +109,7 @@ function InsightDrawer({
   country: string;
   currentLocalPrice: number;
   formatPrice: (p: number) => string;
+  unitLabel: string;
   trend: string;
   changePercent: number;
 }) {
@@ -141,6 +143,7 @@ function InsightDrawer({
             </div>
             <div className="text-right shrink-0">
               <div className="text-lg font-bold">{formatPrice(currentLocalPrice)}</div>
+              <div className="text-xs text-muted-foreground">per {unitLabel}</div>
               <TrendBadge trend={trend} percent={changePercent} />
             </div>
           </div>
@@ -172,13 +175,13 @@ function InsightDrawer({
                   <div className="rounded-xl bg-muted/60 p-3 text-center">
                     <div className="text-xs text-muted-foreground mb-1">AI Estimated Price</div>
                     <div className="text-base font-bold">{formatPrice(insight.currentPrice ?? currentLocalPrice)}</div>
-                    <div className="text-xs text-muted-foreground mt-0.5">per metric ton</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">per {unitLabel}</div>
                   </div>
                   <div className="rounded-xl bg-muted/60 p-3 text-center">
                     <div className="text-xs text-muted-foreground mb-1">30-Day Change</div>
                     <div className={`text-base font-bold ${
-                      (insight.changePercent ?? 0) > 0 ? "text-rose-600" : 
-                      (insight.changePercent ?? 0) < 0 ? "text-emerald-600" : 
+                      (insight.changePercent ?? 0) > 0 ? "text-rose-600" :
+                      (insight.changePercent ?? 0) < 0 ? "text-emerald-600" :
                       "text-muted-foreground"
                     }`}>
                       {(insight.changePercent ?? 0) > 0 ? "+" : ""}{(insight.changePercent ?? 0).toFixed(1)}%
@@ -246,12 +249,19 @@ const PriceRow = memo(function PriceRow({
   formatPrice,
   unitShort,
   onInsight,
+  primaryColumn,
 }: {
   item: MarketPrice;
   formatPrice: (p: number) => string;
   unitShort: string;
   onInsight: (item: MarketPrice) => void;
+  primaryColumn: "local" | "international";
 }) {
+  const primaryPrice = primaryColumn === "international" ? item.internationalPrice : item.localPrice;
+  const secondaryPrice = primaryColumn === "international" ? item.localPrice : item.internationalPrice;
+  const primaryLabel = primaryColumn === "international" ? "Int'l Price" : "Local Price";
+  const secondaryLabel = primaryColumn === "international" ? "Local" : "Int'l";
+
   return (
     <tr className="hover:bg-muted/30 transition-colors group">
       <td className="px-4 py-3.5">
@@ -259,10 +269,13 @@ const PriceRow = memo(function PriceRow({
         <div className="text-xs text-muted-foreground capitalize">{item.category}</div>
       </td>
       <td className="px-4 py-3.5">
-        <div className="font-semibold text-sm">{formatPrice(item.localPrice)}</div>
+        <div className="font-semibold text-sm">{formatPrice(primaryPrice)}</div>
         <div className="text-xs text-muted-foreground">{unitShort}</div>
       </td>
-      <td className="px-4 py-3.5 text-muted-foreground text-sm">{formatPrice(item.internationalPrice)}</td>
+      <td className="px-4 py-3.5 text-muted-foreground text-sm">
+        <div>{formatPrice(secondaryPrice)}</div>
+        <div className="text-xs opacity-60">{secondaryLabel}</div>
+      </td>
       <td className="px-4 py-3.5">
         <TrendBadge trend={item.trend} percent={item.changePercent} />
       </td>
@@ -289,12 +302,18 @@ const MobilePriceCard = memo(function MobilePriceCard({
   formatPrice,
   unitShort,
   onInsight,
+  primaryColumn,
 }: {
   item: MarketPrice;
   formatPrice: (p: number) => string;
   unitShort: string;
   onInsight: (item: MarketPrice) => void;
+  primaryColumn: "local" | "international";
 }) {
+  const primaryPrice = primaryColumn === "international" ? item.internationalPrice : item.localPrice;
+  const secondaryPrice = primaryColumn === "international" ? item.localPrice : item.internationalPrice;
+  const secondaryLabel = primaryColumn === "international" ? "Local" : "Int'l";
+
   return (
     <div className="bg-card border rounded-2xl p-4 shadow-sm">
       <div className="flex items-start justify-between gap-3">
@@ -308,8 +327,9 @@ const MobilePriceCard = memo(function MobilePriceCard({
           )}
         </div>
         <div className="text-right shrink-0">
-          <div className="font-bold text-lg">{formatPrice(item.localPrice)}</div>
-          <div className="text-xs text-muted-foreground mb-1">{unitShort}</div>
+          <div className="font-bold text-lg">{formatPrice(primaryPrice)}</div>
+          <div className="text-xs text-muted-foreground mb-0.5">{unitShort}</div>
+          <div className="text-xs text-muted-foreground">{secondaryLabel}: {formatPrice(secondaryPrice)}</div>
           <TrendBadge trend={item.trend} percent={item.changePercent} />
         </div>
       </div>
@@ -331,7 +351,7 @@ const MobilePriceCard = memo(function MobilePriceCard({
 
 export default function Market() {
   const { location } = useLocationStore();
-  const { settings } = useSettings();
+  const { settings, unitLabel } = useSettings();
   const isMobile = useIsMobile();
   const [category, setCategory] = useState<string>("all");
   const [insightCrop, setInsightCrop] = useState<MarketPrice | null>(null);
@@ -341,6 +361,9 @@ export default function Market() {
     : location;
 
   const selectedCountry = COUNTRIES.find(c => c.code === settings.countryCode);
+
+  const primaryColumn: "local" | "international" =
+    settings.targetMarket === "international" ? "international" : "local";
 
   const priceParams = {
     ...(category !== "all" ? { category } : {}),
@@ -372,16 +395,38 @@ export default function Market() {
     setInsightCrop(item);
   }, []);
 
+  const marketModeLabel =
+    settings.targetMarket === "international"
+      ? "International Commodities"
+      : settings.targetMarket === "regional"
+      ? "Regional Market"
+      : "Local Market";
+
+  const primaryColumnLabel =
+    primaryColumn === "international" ? "Int'l Price" : "Local Price";
+  const secondaryColumnLabel =
+    primaryColumn === "international" ? "Local Price" : "Int'l Price";
+
   return (
     <div className="space-y-5 pb-4">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Market Prices</h1>
-          <p className="text-muted-foreground mt-0.5 flex items-center gap-2 text-sm">
+          <p className="text-muted-foreground mt-0.5 flex items-center gap-2 text-sm flex-wrap">
             AI-powered live price tracking
             <span className="inline-flex items-center gap-1 bg-primary/10 text-primary text-xs font-semibold px-2 py-0.5 rounded-full">
               <Scale className="h-3 w-3" /> {currencySymbol} / {unitShort}
+            </span>
+            <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full ${
+              settings.targetMarket === "international"
+                ? "bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400"
+                : settings.targetMarket === "regional"
+                ? "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400"
+                : "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400"
+            }`}>
+              {settings.targetMarket === "international" ? <Globe className="h-3 w-3" /> : <MapPin className="h-3 w-3" />}
+              {marketModeLabel}
             </span>
           </p>
         </div>
@@ -456,7 +501,7 @@ export default function Market() {
             <div>
               <CardTitle className="text-base">Price Index</CardTitle>
               <CardDescription>
-                {settings.currency}/{unitShort} · AI-adjusted for {locationStr || "your region"} · Click <Sparkles className="h-3 w-3 inline" /> Details for deep analysis
+                {settings.currency}/{unitShort} · {marketModeLabel} · AI-adjusted for {locationStr || "your region"} · Click <Sparkles className="h-3 w-3 inline" /> Details for deep analysis
               </CardDescription>
             </div>
             {trends && (
@@ -476,8 +521,12 @@ export default function Market() {
                   <thead className="bg-muted/50 text-muted-foreground border-b">
                     <tr>
                       <th className="px-4 py-3 font-medium">Crop</th>
-                      <th className="px-4 py-3 font-medium">Local Price</th>
-                      <th className="px-4 py-3 font-medium">Int'l Price</th>
+                      <th className="px-4 py-3 font-medium">
+                        <span className={primaryColumn === "international" ? "text-blue-600 dark:text-blue-400" : "text-green-600 dark:text-green-400"}>
+                          {primaryColumnLabel}
+                        </span>
+                      </th>
+                      <th className="px-4 py-3 font-medium text-muted-foreground">{secondaryColumnLabel}</th>
                       <th className="px-4 py-3 font-medium">Trend</th>
                       <th className="px-4 py-3 font-medium hidden lg:table-cell">AI Insight</th>
                       <th className="px-4 py-3 font-medium text-right">Analysis</th>
@@ -491,6 +540,7 @@ export default function Market() {
                         formatPrice={formatPrice}
                         unitShort={unitShort}
                         onInsight={handleInsight}
+                        primaryColumn={primaryColumn}
                       />
                     ))}
                     {(!prices || prices.length === 0) && (
@@ -530,6 +580,7 @@ export default function Market() {
                   formatPrice={formatPrice}
                   unitShort={unitShort}
                   onInsight={handleInsight}
+                  primaryColumn={primaryColumn}
                 />
               ))}
               {(!prices || prices.length === 0) && (
@@ -549,8 +600,13 @@ export default function Market() {
         crop={insightCrop?.crop ?? ""}
         location={locationStr}
         country={selectedCountry?.name ?? ""}
-        currentLocalPrice={insightCrop?.localPrice ?? 0}
+        currentLocalPrice={
+          primaryColumn === "international"
+            ? (insightCrop?.internationalPrice ?? 0)
+            : (insightCrop?.localPrice ?? 0)
+        }
         formatPrice={formatPrice}
+        unitLabel={unitLabel}
         trend={insightCrop?.trend ?? "stable"}
         changePercent={insightCrop?.changePercent ?? 0}
       />

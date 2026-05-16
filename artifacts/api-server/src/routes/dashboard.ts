@@ -1,5 +1,27 @@
 import { Router } from "express";
-import { openai } from "@workspace/integrations-openai-ai-server";
+import { openrouter } from "@workspace/integrations-openrouter-ai";
+
+const AI_MODELS = [
+  "deepseek/deepseek-chat-v3-0324:free",
+  "meta-llama/llama-3.1-8b-instruct:free",
+  "mistralai/mistral-7b-instruct:free",
+];
+
+async function aiComplete(prompt: string, maxTokens: number): Promise<string | null> {
+  for (const model of AI_MODELS) {
+    try {
+      const resp = await (openrouter as any).chat.completions.create({
+        model,
+        max_tokens: maxTokens,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.4,
+      });
+      const content = resp.choices?.[0]?.message?.content as string | undefined;
+      if (content) return content;
+    } catch {}
+  }
+  return null;
+}
 import { GetDashboardSummaryQueryParams } from "@workspace/api-zod";
 
 const router = Router();
@@ -101,13 +123,7 @@ router.get("/dashboard/summary", async (req, res) => {
 }
 No markdown, just the JSON.`;
 
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        max_tokens: 300,
-        messages: [{ role: "user", content: aiPrompt }],
-      });
-
-      const text = completion.choices[0]?.message?.content ?? "{}";
+      const text = await aiComplete(aiPrompt, 300) ?? "{}";
       const cleaned = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
       const ai = JSON.parse(cleaned);
       cropRec = ai.cropRecommendation ?? cropRec;

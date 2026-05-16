@@ -1,6 +1,6 @@
 import { memo } from "react";
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, CloudSun, Sprout, TrendingUp, MessageSquare, MapPin, Settings, Menu, X } from "lucide-react";
+import { LayoutDashboard, CloudSun, Sprout, TrendingUp, ClipboardList, MapPin, Settings, Menu, X } from "lucide-react";
 import { useLocationStore } from "@/hooks/use-location";
 import { useSettings } from "@/hooks/use-settings";
 import { COUNTRIES } from "@/lib/country-data";
@@ -12,7 +12,7 @@ const NAV_ITEMS = [
   { href: "/weather", icon: CloudSun, label: "Weather" },
   { href: "/crops", icon: Sprout, label: "Crops" },
   { href: "/market", icon: TrendingUp, label: "Market" },
-  { href: "/chat", icon: MessageSquare, label: "Ask AI" },
+  { href: "/farming-plan", icon: ClipboardList, label: "Farming Plan" },
   { href: "/settings", icon: Settings, label: "Settings" },
 ] as const;
 
@@ -134,6 +134,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
   const closeMobileMenu = () => setMobileMenuOpen(false);
 
+  const marketModeLabel =
+    settings.targetMarket === "international" ? "Int'l Market" :
+    settings.targetMarket === "regional" ? "Regional Market" :
+    "Local Market";
+
   return (
     <div className="flex h-[100dvh] w-full bg-background text-foreground overflow-hidden">
       {/* Desktop Sidebar */}
@@ -222,6 +227,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
               </>
             )}
             <span className="capitalize">{settings.weightUnit.replace("_", " ")} pricing</span>
+            <span>·</span>
+            <span className={`font-medium ${
+              settings.targetMarket === "international" ? "text-blue-600 dark:text-blue-400" :
+              settings.targetMarket === "regional" ? "text-amber-600 dark:text-amber-400" :
+              "text-green-600 dark:text-green-400"
+            }`}>
+              {marketModeLabel}
+            </span>
           </div>
 
           <div className="flex items-center gap-1.5 bg-primary/8 border border-primary/20 rounded-full px-3 py-1 text-xs font-medium text-primary/90">

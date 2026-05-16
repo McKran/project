@@ -1,4 +1,4 @@
-import { Moon, Sun, Monitor, MapPin, Globe, Scale, Database, Brain, ChevronRight, RefreshCw, ShoppingCart, Sprout } from "lucide-react";
+import { Moon, Sun, Monitor, MapPin, Globe, Scale, Database, ChevronRight, RefreshCw, ShoppingCart, ClipboardList } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useLocationStore } from "@/hooks/use-location";
 import { Input } from "@/components/ui/input";
@@ -63,6 +63,20 @@ export default function Settings() {
     const country = COUNTRIES.find(c => c.code === code);
     updateSettings({ countryCode: code, currency: country?.currency ?? "USD" });
   };
+
+  const marketModeDescription =
+    settings.targetMarket === "international"
+      ? "Showing international commodity benchmarks as primary price"
+      : settings.targetMarket === "regional"
+      ? "Showing regional market prices as primary benchmark"
+      : "Showing local farmgate and market prices as primary";
+
+  const unitDescription =
+    settings.weightUnit === "gram"
+      ? "Prices shown per gram across all market views"
+      : settings.weightUnit === "kilogram"
+      ? "Prices shown per kilogram across all market views"
+      : "Prices shown per metric ton across all market views";
 
   return (
     <div className="max-w-2xl mx-auto space-y-2 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-16">
@@ -177,7 +191,7 @@ export default function Settings() {
         <SettingsRow
           icon={Scale}
           label="Default Weight Unit"
-          description="Used for all market prices and profitability"
+          description={unitDescription}
           control={
             <Select
               value={settings.weightUnit}
@@ -197,7 +211,7 @@ export default function Settings() {
         <SettingsRow
           icon={ShoppingCart}
           label="Target Market"
-          description="Affects price benchmarks shown"
+          description={marketModeDescription}
           control={
             <Select
               value={settings.targetMarket}
@@ -232,12 +246,24 @@ export default function Settings() {
         </div>
       </SettingsGroup>
 
-      <SettingsGroup title="AI Assistant">
-        <SettingsRow icon={Brain} label="Model Version" value="Agri-GPT 4.0" control={<div />} />
-      </SettingsGroup>
-
-      <SettingsGroup title="Data">
-        <SettingsRow icon={Database} label="Data Refresh Interval" value="Every 15 minutes" control={<div />} />
+      <SettingsGroup title="Farming Plan">
+        <SettingsRow
+          icon={ClipboardList}
+          label="Plan Intelligence"
+          description="Powered by live Open-Meteo weather data and verified crop growth cycles"
+          value={
+            <Badge variant="secondary" className="bg-primary/10 text-primary text-xs">
+              Live Data
+            </Badge>
+          }
+          control={<div />}
+        />
+        <SettingsRow
+          icon={Database}
+          label="Data Refresh Interval"
+          value="Every 15 minutes"
+          control={<div />}
+        />
       </SettingsGroup>
 
       <SettingsGroup title="Setup">
