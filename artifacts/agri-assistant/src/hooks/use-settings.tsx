@@ -21,20 +21,20 @@ export interface AppSettings {
 
 const DEFAULT_SETTINGS: AppSettings = {
   onboardingCompleted: false,
-  countryCode: "KE",
+  countryCode: "PH",
   regionName: "",
   stateName: "",
   cityName: "",
   cityLat: null,
   cityLon: null,
-  currency: "KES",
+  currency: "PHP",
   weightUnit: "kilogram",
   preferredCrops: [],
   targetMarket: "local",
   theme: "system",
 };
 
-const STORAGE_KEY = "agri_settings_v4";
+const STORAGE_KEY = "agri_settings_v5";
 
 function loadSettings(): AppSettings {
   try {

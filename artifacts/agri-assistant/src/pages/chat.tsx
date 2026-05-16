@@ -104,6 +104,7 @@ export default function Chat() {
           crops: settings.preferredCrops,
           targetMarket: settings.targetMarket,
           cityName: settings.cityName,
+          regionName: settings.regionName || settings.stateName,
         }),
       });
 
@@ -253,7 +254,7 @@ export default function Chat() {
       const res = await fetch(`${BASE}api/openai/conversations/${targetId}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: userMessage, context: { location } }),
+        body: JSON.stringify({ content: userMessage, context: { location, currency: settings.currency, currentCrop: settings.preferredCrops[0] ?? null } }),
       });
 
       if (!res.body) throw new Error("No response body");

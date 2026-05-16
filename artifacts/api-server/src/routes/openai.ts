@@ -2,7 +2,6 @@ import { Router } from "express";
 import { eq } from "drizzle-orm";
 import { db, conversations, messages } from "@workspace/db";
 import { openrouter } from "@workspace/integrations-openrouter-ai";
-import { openai } from "@workspace/integrations-openai-ai-server";
 import {
   CreateOpenaiConversationBody,
   SendOpenaiMessageBody,
@@ -13,34 +12,65 @@ import {
 
 const router = Router();
 
-const DEEPSEEK_MODEL = "deepseek/deepseek-chat-v3-0324:free";
-const FALLBACK_MODEL = "meta-llama/llama-4-scout:free";
+const MODEL_CHAIN = [
+  "deepseek/deepseek-chat-v3-0324:free",
+  "meta-llama/llama-3.1-8b-instruct:free",
+  "mistralai/mistral-7b-instruct:free",
+  "qwen/qwen2.5-7b-instruct:free",
+];
 
-const SYSTEM_PROMPT = `You are AgriBot, an expert AI agricultural assistant specializing in practical farming guidance for smallholder and commercial farmers worldwide. You have deep expertise in:
+const SYSTEM_PROMPT = `You are AgriBot, an expert AI agricultural assistant built specifically for Filipino farmers and the Philippine agricultural system. You have deep expertise in:
 
-- Crop selection, rotation, and intercropping strategies
-- Pest and disease identification, prevention, and management
-- Fertilizer application, soil health, and composting
-- Irrigation scheduling and water conservation
-- Harvest timing, post-harvest handling, and storage
-- Weather-based farming decisions and climate adaptation
-- Market timing, price negotiation, and crop value optimization
-- Sustainable, organic, and regenerative farming practices
-- Agricultural finance, input cost management, and profit planning
+**Philippine Crops & Production:**
+- Palay (rice) and mais (corn) — the two major staple crops
+- High-value crops: coconut, sugarcane, banana, pineapple, mango, cacao
+- Vegetables: ampalaya, sitaw, kamote, pechay, tomato, onion, garlic
+- Root crops: cassava, kamote, gabi, ube
+- Export crops: Cavendish banana, abaca, seaweed, asparagus
+
+**Philippine Government Programs & Agencies:**
+- DA (Department of Agriculture) programs: RCEF, KADIWA, Expanded SURE Aid
+- PhilFoodEx and the SRA (Sugar Regulatory Administration)
+- PCIC (Philippine Crop Insurance Corporation) coverage and claims
+- NFA (National Food Authority) palay buying prices
+- ACPC (Agricultural Credit Policy Council) and farmer financing
+- MASAGANA series programs and DA regional offices
+
+**Regional & Climate Context:**
+- PAGASA typhoon season (June–November), signal classifications, and storm surge alerts
+- El Niño and La Niña impacts on Philippine farming
+- Three island group farming zones: Luzon, Visayas, Mindanao
+- Philippine soil classification and irrigation systems (NIA)
+- CALABARZON, Cordillera, Cagayan Valley, Central Luzon, Bicol, Western Visayas, Mindanao agri belts
+
+**Economics & Markets:**
+- All pricing in Philippine Peso (PHP) as base currency
+- DA weekly farmgate price bulletins and price ceilings (EO 39)
+- PSA (Philippine Statistics Authority) agricultural data
+- Local trading posts, wet markets, and trading centers
+- Agri-tourism and direct-to-consumer farming
+
+**Practical Guidance:**
+- Integrated Pest Management (IPM) for Philippine conditions
+- Seed varieties: NSIC-certified rice/corn varieties, hybrid vs open-pollinated
+- Fertilizer use: Urea, Ammonium Sulfate, Complete (14-14-14), Organic (compost, vermicast)
+- Water management for rainfed and irrigated farms
+- Harvest, post-harvest, and value-adding for Philippine conditions
 
 When responding:
-- Lead with the most actionable advice first
-- Be specific: give dosages, timings, quantities (e.g., "Apply 50kg CAN/ha at knee height")
-- Use the farmer's location and crop context to tailor your answer
-- Clearly flag urgent or time-sensitive issues
-- Consider smallholder resource constraints
-- Use bullet points and headers for multi-part answers
-- Keep responses concise but complete — farmers are busy
+- Always use PHP (₱) for prices; provide USD equivalent only if specifically requested
+- Reference PAGASA, DA, and PSA data when applicable
+- Be specific about timing (planting calendar, bayanihan harvest dates, etc.)
+- Adapt advice to the farmer's specific region and crop context
+- Flag typhoon, flooding, and drought risks proactively
+- Use Filipino farming terms naturally (palay, mais, baha, tag-ulan, tag-araw)
+- Keep responses practical and actionable for smallholder Filipino farmers
+- Format multi-part answers with headers and bullet points
 
-You are not a medical or legal advisor. Stay focused on agriculture.`;
+You are not a medical or legal advisor. Stay focused on Philippine agriculture.`;
 
 const requestTimestamps = new Map<number, number[]>();
-const MAX_REQUESTS_PER_MINUTE = 10;
+const MAX_REQUESTS_PER_MINUTE = 12;
 
 function isThrottled(conversationId: number): boolean {
   const now = Date.now();
@@ -50,6 +80,34 @@ function isThrottled(conversationId: number): boolean {
   if (times.length >= MAX_REQUESTS_PER_MINUTE) return true;
   times.push(now);
   return false;
+}
+
+async function streamFromModelChain(
+  chatMessages: { role: "system" | "user" | "assistant"; content: string }[],
+  maxTokens: number,
+  temperature: number,
+  onChunk: (content: string) => void,
+  log: any,
+): Promise<{ success: boolean; modelUsed: string | null }> {
+  for (const model of MODEL_CHAIN) {
+    try {
+      const stream = await (openrouter as any).chat.completions.create({
+        model,
+        max_tokens: maxTokens,
+        messages: chatMessages,
+        stream: true,
+        temperature,
+      });
+      for await (const chunk of stream) {
+        const content = chunk.choices?.[0]?.delta?.content;
+        if (content) onChunk(content);
+      }
+      return { success: true, modelUsed: model };
+    } catch (err: any) {
+      log.warn({ model, err: err?.message ?? String(err) }, "Model failed, trying next in chain");
+    }
+  }
+  return { success: false, modelUsed: null };
 }
 
 router.get("/openai/conversations", async (req, res) => {
@@ -150,7 +208,7 @@ router.post("/openai/conversations/:id/welcome", async (req, res) => {
     crops?: string[];
     targetMarket?: string;
     cityName?: string;
-    countryName?: string;
+    regionName?: string;
   };
 
   try {
@@ -174,16 +232,18 @@ router.post("/openai/conversations/:id/welcome", async (req, res) => {
       return;
     }
 
-    const location = context.location || context.cityName || "your area";
-    const crops = context.crops?.length ? context.crops.join(", ") : "general crops";
+    const locationStr = [context.cityName, context.regionName, "Philippines"]
+      .filter(Boolean)
+      .join(", ");
+    const crops = context.crops?.length ? context.crops.join(", ") : "general farming";
     const market = context.targetMarket ?? "local";
 
-    const welcomePrompt = `Generate a warm, concise welcome message (3–5 sentences max) for a farmer who just set up their AgriAssist profile. Their details:
-- Location: ${location}
-- Crops of interest: ${crops}
+    const welcomePrompt = `Generate a warm, helpful welcome message (3–5 sentences) for a Filipino farmer who just set up their AgriAssist profile. Their details:
+- Location: ${locationStr}
+- Crops: ${crops}
 - Target market: ${market}
 
-Greet them by confirming these settings, then briefly mention 1–2 things you can help them with right now (weather timing, market prices, pest alerts, etc.). End with a single open-ended question to start a conversation. Be friendly and practical.`;
+Greet them warmly in a mix of Filipino-friendly English (you may use a word or two of Filipino/Tagalog naturally). Confirm their setup, mention 1–2 things you can specifically help with right now (PAGASA weather, DA price bulletins, pest alerts, planting calendar, etc.). End with one practical question to start the conversation. Be friendly, specific, and concise.`;
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache, no-store");
@@ -192,41 +252,24 @@ Greet them by confirming these settings, then briefly mention 1–2 things you c
     res.flushHeaders();
 
     let fullResponse = "";
-    let streamSuccess = false;
 
-    const tryStream = async (useDeepSeek: boolean): Promise<boolean> => {
-      try {
-        const client = useDeepSeek ? openrouter : openai;
-        const model = useDeepSeek ? DEEPSEEK_MODEL : FALLBACK_MODEL;
+    const { success } = await streamFromModelChain(
+      [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: welcomePrompt },
+      ],
+      400,
+      0.8,
+      (content) => {
+        fullResponse += content;
+        res.write(`data: ${JSON.stringify({ content })}\n\n`);
+      },
+      req.log,
+    );
 
-        const stream = await (client as any).chat.completions.create({
-          model,
-          max_tokens: 300,
-          messages: [
-            { role: "system", content: SYSTEM_PROMPT },
-            { role: "user", content: welcomePrompt },
-          ],
-          stream: true,
-          temperature: 0.8,
-        });
-
-        for await (const chunk of stream) {
-          const content = chunk.choices[0]?.delta?.content;
-          if (content) {
-            fullResponse += content;
-            res.write(`data: ${JSON.stringify({ content })}\n\n`);
-          }
-        }
-        return true;
-      } catch {
-        return false;
-      }
-    };
-
-    streamSuccess = await tryStream(true);
-    if (!streamSuccess) {
-      fullResponse = "";
-      streamSuccess = await tryStream(false);
+    if (!success) {
+      res.write(`data: ${JSON.stringify({ content: "Magandang araw! Welcome to AgriAssist. I'm your AI farming assistant for the Philippines. How can I help you today?" })}\n\n`);
+      fullResponse = "Magandang araw! Welcome to AgriAssist. I'm your AI farming assistant for the Philippines. How can I help you today?";
     }
 
     res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
@@ -270,6 +313,7 @@ router.post("/openai/conversations/:id/messages", async (req, res) => {
   const context = (bodyParsed.data as any).context as {
     location?: string | null;
     currentCrop?: string | null;
+    currency?: string | null;
   } | undefined;
 
   try {
@@ -295,13 +339,17 @@ router.post("/openai/conversations/:id/messages", async (req, res) => {
       .where(eq(messages.conversationId, conversationId))
       .orderBy(messages.createdAt);
 
-    const contextNote = context?.location || context?.currentCrop
-      ? `\n\n[Farmer context — Location: ${context?.location ?? "unknown"}, Crop focus: ${context?.currentCrop ?? "general"}]`
+    const contextParts: string[] = [];
+    if (context?.location) contextParts.push(`Location: ${context.location}, Philippines`);
+    if (context?.currentCrop) contextParts.push(`Crop focus: ${context.currentCrop}`);
+    if (context?.currency) contextParts.push(`Currency: ${context.currency}`);
+    const contextNote = contextParts.length > 0
+      ? `\n\n[Farmer context — ${contextParts.join(" | ")}]`
       : "";
 
     const chatMessages: { role: "system" | "user" | "assistant"; content: string }[] = [
       { role: "system", content: SYSTEM_PROMPT + contextNote },
-      ...history.slice(-20).map((m) => ({
+      ...history.slice(-24).map((m) => ({
         role: m.role as "user" | "assistant",
         content: m.content,
       })),
@@ -314,44 +362,20 @@ router.post("/openai/conversations/:id/messages", async (req, res) => {
     res.flushHeaders();
 
     let fullResponse = "";
-    let streamSuccess = false;
 
-    const tryStream = async (useDeepSeek: boolean): Promise<boolean> => {
-      try {
-        const client = useDeepSeek ? openrouter : openai;
-        const model = useDeepSeek ? DEEPSEEK_MODEL : "gpt-5-mini";
+    const { success } = await streamFromModelChain(
+      chatMessages,
+      1800,
+      0.7,
+      (content) => {
+        fullResponse += content;
+        res.write(`data: ${JSON.stringify({ content })}\n\n`);
+      },
+      req.log,
+    );
 
-        const stream = await (client as any).chat.completions.create({
-          model,
-          max_tokens: 1500,
-          messages: chatMessages,
-          stream: true,
-          temperature: 0.7,
-        });
-
-        for await (const chunk of stream) {
-          const content = chunk.choices[0]?.delta?.content;
-          if (content) {
-            fullResponse += content;
-            res.write(`data: ${JSON.stringify({ content })}\n\n`);
-          }
-        }
-        return true;
-      } catch (err: any) {
-        req.log.warn({ err, useDeepSeek }, "Stream attempt failed, will try fallback");
-        return false;
-      }
-    };
-
-    streamSuccess = await tryStream(true);
-
-    if (!streamSuccess) {
-      fullResponse = "";
-      streamSuccess = await tryStream(false);
-    }
-
-    if (!streamSuccess) {
-      res.write(`data: ${JSON.stringify({ error: "AI service temporarily unavailable. Please try again." })}\n\n`);
+    if (!success) {
+      res.write(`data: ${JSON.stringify({ error: "AI service temporarily unavailable. Please try again in a moment." })}\n\n`);
     }
 
     res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
