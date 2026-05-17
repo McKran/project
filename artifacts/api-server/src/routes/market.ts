@@ -1,5 +1,7 @@
 import { Router } from "express";
 import { openrouter } from "@workspace/integrations-openrouter-ai";
+import { getCached, setCached, TTL } from "../lib/db-cache";
+import { GetMarketPricesQueryParams, GetMarketInsightQueryParams } from "@workspace/api-zod";
 
 const AI_MODELS = [
   "deepseek/deepseek-chat-v3-0324:free",
@@ -22,14 +24,8 @@ async function aiComplete(prompt: string, maxTokens: number): Promise<string | n
   }
   return null;
 }
-import { GetMarketPricesQueryParams, GetMarketInsightQueryParams } from "@workspace/api-zod";
 
 const router = Router();
-
-const priceCache = new Map<string, { data: any; ts: number }>();
-const insightCache = new Map<string, { data: any; ts: number }>();
-const PRICE_CACHE_TTL = 60 * 60 * 1000;
-const INSIGHT_CACHE_TTL = 30 * 60 * 1000;
 
 const GLOBAL_BASE_PRICES_USD_PER_TON: Record<string, { local: number; intl: number; category: string; unit: string }> = {
   "Maize": { local: 185, intl: 215, category: "Cereals", unit: "ton" },
@@ -113,11 +109,34 @@ function deterministicJitter(crop: string, date: string, field: string): number 
   return (Math.abs(hash) % 200 - 100) / 1000;
 }
 
+function getFallbackPrices(crops: string[], today: string) {
+  return crops.map(crop => {
+    const base = GLOBAL_BASE_PRICES_USD_PER_TON[crop];
+    if (!base) return null;
+    const jitter = deterministicJitter(crop, today, "jitter");
+    const trendSeed = Math.abs(deterministicJitter(crop, today, "trend"));
+    const trend = trendSeed < 0.04 ? "rising" : trendSeed < 0.07 ? "falling" : "stable";
+    const changeRaw = deterministicJitter(crop, today, "change") * 150;
+    const changePercent = trend === "rising" ? Math.abs(changeRaw) + 0.5 : trend === "falling" ? -(Math.abs(changeRaw) + 0.5) : Math.abs(changeRaw) * 0.3;
+    return {
+      crop,
+      localPrice: Math.round(base.local * (1 + jitter)),
+      internationalPrice: Math.round(base.intl * (1 + jitter)),
+      unit: base.unit,
+      trend,
+      changePercent: Math.round(changePercent * 10) / 10,
+      category: base.category,
+      aiInsight: "Based on global commodity market averages",
+    };
+  }).filter(Boolean);
+}
+
 async function getAIEnhancedPrices(location: string, crops: string[]): Promise<any[]> {
   const today = new Date().toISOString().split("T")[0];
-  const cacheKey = `prices_${location}_${today}_${crops.slice(0, 5).join("_")}`;
-  const cached = priceCache.get(cacheKey);
-  if (cached && Date.now() - cached.ts < PRICE_CACHE_TTL) return cached.data;
+  const cacheKey = `market_prices_${location}_${today}_${crops.slice(0, 5).join("_")}`;
+
+  const cached = await getCached<any[]>(cacheKey);
+  if (cached) return cached;
 
   const basePricesForCrops = crops.slice(0, 20).map(crop => {
     const base = GLOBAL_BASE_PRICES_USD_PER_TON[crop];
@@ -152,7 +171,7 @@ Vary the trends realistically — not everything rises.`;
 
     const items = Array.isArray(parsed) ? parsed : (parsed.prices ?? parsed.data ?? parsed.results ?? []);
     if (Array.isArray(items) && items.length > 0) {
-      priceCache.set(cacheKey, { data: items, ts: Date.now() });
+      await setCached(cacheKey, items, TTL.MARKET_PRICES);
       return items;
     }
   } catch {}
@@ -160,33 +179,12 @@ Vary the trends realistically — not everything rises.`;
   return getFallbackPrices(crops, today);
 }
 
-function getFallbackPrices(crops: string[], today: string) {
-  return crops.map(crop => {
-    const base = GLOBAL_BASE_PRICES_USD_PER_TON[crop];
-    if (!base) return null;
-    const jitter = deterministicJitter(crop, today, "jitter");
-    const trendSeed = Math.abs(deterministicJitter(crop, today, "trend"));
-    const trend = trendSeed < 0.04 ? "rising" : trendSeed < 0.07 ? "falling" : "stable";
-    const changeRaw = deterministicJitter(crop, today, "change") * 150;
-    const changePercent = trend === "rising" ? Math.abs(changeRaw) + 0.5 : trend === "falling" ? -(Math.abs(changeRaw) + 0.5) : Math.abs(changeRaw) * 0.3;
-    return {
-      crop,
-      localPrice: Math.round(base.local * (1 + jitter)),
-      internationalPrice: Math.round(base.intl * (1 + jitter)),
-      unit: base.unit,
-      trend,
-      changePercent: Math.round(changePercent * 10) / 10,
-      category: base.category,
-      aiInsight: "Based on global commodity market averages",
-    };
-  }).filter(Boolean);
-}
-
 async function getAIMarketInsight(crop: string, location: string, country: string): Promise<any> {
   const today = new Date().toISOString().split("T")[0];
-  const cacheKey = `insight_${crop}_${location}_${today}`;
-  const cached = insightCache.get(cacheKey);
-  if (cached && Date.now() - cached.ts < INSIGHT_CACHE_TTL) return cached.data;
+  const cacheKey = `market_insight_${crop}_${location}_${today}`;
+
+  const cached = await getCached<any>(cacheKey);
+  if (cached) return cached;
 
   const base = GLOBAL_BASE_PRICES_USD_PER_TON[crop];
   const basePrice = base ? base.local : 500;
@@ -206,15 +204,13 @@ Provide a comprehensive market insight report. Structure your analysis as JSON w
   "currentPrice": <current estimated USD/metric ton>,
   "priceDirection": "rising|stable|falling",
   "changePercent": <percentage change from 30 days ago, positive or negative number>,
-  "localAnalysis": "<2-3 sentences specifically about ${country || "the local"} market conditions, including local supply/demand, harvest season status, local transport costs, domestic policy, or regional trade. ALWAYS address local conditions first.>",
-  "globalAnalysis": "<2-3 sentences about global market forces: international commodity exchanges, major exporting/importing countries, global supply disruptions, shipping/logistics, international trade policies, or currency effects.>",
-  "keyDrivers": ["<specific factor 1>", "<specific factor 2>", "<specific factor 3>", "<specific factor 4>"],
-  "futureOutlook": "<2-3 sentences forecasting price trajectory over next 4-8 weeks based on upcoming harvests, seasonal demand, policy announcements, or weather forecasts. Be specific and actionable.>",
-  "seasonalNote": "<1 sentence about how the current season (${month}) typically affects ${crop} prices in ${country || "this region"}.>",
+  "localAnalysis": "<2-3 sentences specifically about ${country || "the local"} market conditions>",
+  "globalAnalysis": "<2-3 sentences about global market forces>",
+  "keyDrivers": ["<factor 1>", "<factor 2>", "<factor 3>", "<factor 4>"],
+  "futureOutlook": "<2-3 sentences forecasting price trajectory over next 4-8 weeks>",
+  "seasonalNote": "<1 sentence about how ${month} typically affects ${crop} prices>",
   "confidence": "low|medium|high"
-}
-
-Be specific, realistic, and prioritize LOCAL country conditions before global factors. Reference real agricultural dynamics.`;
+}`;
 
   try {
     const raw = await aiComplete(prompt, 1200) ?? "{}";
@@ -227,7 +223,7 @@ Be specific, realistic, and prioritize LOCAL country conditions before global fa
 
     if (parsed && parsed.crop) {
       const result = { ...parsed, generatedAt: new Date().toISOString() };
-      insightCache.set(cacheKey, { data: result, ts: Date.now() });
+      await setCached(cacheKey, result, TTL.MARKET_INSIGHT);
       return result;
     }
   } catch {}
@@ -240,7 +236,7 @@ Be specific, realistic, and prioritize LOCAL country conditions before global fa
     localAnalysis: `${crop} market conditions in ${country || "the local market"} are currently stable based on seasonal averages.`,
     globalAnalysis: `Global ${crop} markets are tracking near long-term averages with no major disruptions reported.`,
     keyDrivers: ["Seasonal harvest patterns", "Local demand conditions", "Transportation costs", "Currency exchange rates"],
-    futureOutlook: `${crop} prices are expected to remain near current levels in the near term pending harvest outcomes and weather conditions.`,
+    futureOutlook: `${crop} prices are expected to remain near current levels in the near term.`,
     seasonalNote: `${month} is a typical period for ${crop} in this region.`,
     confidence: "low",
     generatedAt: new Date().toISOString(),

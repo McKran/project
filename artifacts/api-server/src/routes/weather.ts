@@ -1,5 +1,11 @@
 import { Router } from "express";
 import { openrouter } from "@workspace/integrations-openrouter-ai";
+import { getCached, setCached, TTL } from "../lib/db-cache";
+import {
+  GetWeatherQueryParams,
+  GetWeatherForecastQueryParams,
+  GetFarmingAdviceQueryParams,
+} from "@workspace/api-zod";
 
 const AI_MODELS = [
   "deepseek/deepseek-chat-v3-0324:free",
@@ -22,11 +28,6 @@ async function aiComplete(prompt: string, maxTokens: number): Promise<string | n
   }
   return null;
 }
-import {
-  GetWeatherQueryParams,
-  GetWeatherForecastQueryParams,
-  GetFarmingAdviceQueryParams,
-} from "@workspace/api-zod";
 
 const router = Router();
 
@@ -162,7 +163,6 @@ router.get("/weather/forecast", async (req, res) => {
     if (!geo) {
       const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
       const fallback = Array.from({ length: 7 }, (_, i) => {
-
         const date = new Date();
         date.setDate(date.getDate() + i);
         const seed = location.length + i;
@@ -218,7 +218,16 @@ router.get("/weather/farming-advice", async (req, res) => {
   const lat = req.query.lat ? parseFloat(req.query.lat as string) : undefined;
   const lon = req.query.lon ? parseFloat(req.query.lon as string) : undefined;
 
+  const hour = new Date().getUTCHours();
+  const cacheKey = `farming_advice_${location}_${crop}_${new Date().toISOString().slice(0, 13)}_${Math.floor(hour / 2)}`;
+
   try {
+    const cached = await getCached<any>(cacheKey);
+    if (cached) {
+      res.json(cached);
+      return;
+    }
+
     const geo = await resolveCoords(lat, lon, location);
     let weatherDesc = "Partly Cloudy, 22°C, 65% humidity, 10 km/h wind";
     if (geo) {
@@ -246,6 +255,8 @@ Respond ONLY with a JSON object (no markdown):
     const text = await aiComplete(prompt, 500);
     const cleaned = (text ?? "{}").replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
     const advice = JSON.parse(cleaned);
+
+    await setCached(cacheKey, advice, TTL.WEATHER);
     res.json(advice);
   } catch (err) {
     req.log.error({ err }, "Error getting farming advice");

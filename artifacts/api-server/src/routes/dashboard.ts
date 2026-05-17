@@ -1,5 +1,7 @@
 import { Router } from "express";
 import { openrouter } from "@workspace/integrations-openrouter-ai";
+import { getCached, setCached, TTL } from "../lib/db-cache";
+import { GetDashboardSummaryQueryParams } from "@workspace/api-zod";
 
 const AI_MODELS = [
   "deepseek/deepseek-chat-v3-0324:free",
@@ -22,7 +24,6 @@ async function aiComplete(prompt: string, maxTokens: number): Promise<string | n
   }
   return null;
 }
-import { GetDashboardSummaryQueryParams } from "@workspace/api-zod";
 
 const router = Router();
 
@@ -108,14 +109,28 @@ router.get("/dashboard/summary", async (req, res) => {
   const location = (parsed.success && parsed.data.location) ? parsed.data.location : "Nairobi, Kenya";
 
   try {
-    const weather = (await fetchLiveWeatherForDashboard(location)) ?? getWeatherFallback(location);
+    // Run weather fetch and AI cache lookup in parallel
+    const today = new Date().toDateString();
+    const cacheKey = `dashboard_ai_${location}_${today}`;
+
+    const [weather, cachedAI] = await Promise.all([
+      fetchLiveWeatherForDashboard(location),
+      getCached<{ cropRecommendation: string; marketAlert: string; farmingTip: string }>(cacheKey),
+    ]);
+
+    const currentWeather = weather ?? getWeatherFallback(location);
 
     let cropRec = "Analyze your local season — consult Crops tab for recommendations";
     let marketAlert = "Check the Market tab for live commodity prices in your region";
     let aiTip = FARMING_TIPS[new Date().getDate() % FARMING_TIPS.length];
 
-    try {
-      const aiPrompt = `You are an expert agronomist. Given the location "${location}" and current date ${new Date().toDateString()}, respond with a JSON object with exactly these 3 fields:
+    if (cachedAI) {
+      cropRec = cachedAI.cropRecommendation ?? cropRec;
+      marketAlert = cachedAI.marketAlert ?? marketAlert;
+      aiTip = cachedAI.farmingTip ?? aiTip;
+    } else {
+      try {
+        const aiPrompt = `You are an expert agronomist. Given the location "${location}" and current date ${today}, respond with a JSON object with exactly these 3 fields:
 {
   "cropRecommendation": "one sentence naming 1-2 best crops to focus on now and why",
   "marketAlert": "one sentence about a current market opportunity or risk for this region",
@@ -123,18 +138,20 @@ router.get("/dashboard/summary", async (req, res) => {
 }
 No markdown, just the JSON.`;
 
-      const text = await aiComplete(aiPrompt, 300) ?? "{}";
-      const cleaned = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-      const ai = JSON.parse(cleaned);
-      cropRec = ai.cropRecommendation ?? cropRec;
-      marketAlert = ai.marketAlert ?? marketAlert;
-      aiTip = ai.farmingTip ?? aiTip;
-    } catch {}
+        const text = await aiComplete(aiPrompt, 300) ?? "{}";
+        const cleaned = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+        const ai = JSON.parse(cleaned);
+        cropRec = ai.cropRecommendation ?? cropRec;
+        marketAlert = ai.marketAlert ?? marketAlert;
+        aiTip = ai.farmingTip ?? aiTip;
+        await setCached(cacheKey, { cropRecommendation: cropRec, marketAlert, farmingTip: aiTip }, TTL.DASHBOARD);
+      } catch {}
+    }
 
-    const alertCount = (weather.rainfall > 5 ? 1 : 0) + (weather.windSpeed > 30 ? 1 : 0) + ((weather as any).condition?.includes("Thunderstorm") ? 1 : 0);
+    const alertCount = (currentWeather.rainfall > 5 ? 1 : 0) + (currentWeather.windSpeed > 30 ? 1 : 0) + ((currentWeather as any).condition?.includes("Thunderstorm") ? 1 : 0);
 
     res.json({
-      weather,
+      weather: currentWeather,
       topCropRecommendation: cropRec,
       marketAlert,
       farmingTip: aiTip,
