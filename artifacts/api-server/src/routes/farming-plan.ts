@@ -1,175 +1,97 @@
+/**
+ * Farming Plan Route
+ *
+ * All plans are generated using:
+ *   1. Open-Meteo Historical Weather API — local GDD rates from real ERA5 reanalysis data
+ *   2. Open-Meteo Forecast API — 16-day weather outlook
+ *   3. Open-Meteo Geocoding API — coordinates from location name
+ *   4. Wikipedia REST API — crop information
+ *   5. World Bank Open Data API — country context
+ *   6. GDD-based rule engine — scientifically grounded, no AI calls
+ *
+ * NO AI models, NO hardcoded timelines, NO paid or restricted APIs.
+ * Plans are persisted in PostgreSQL to avoid redundant data fetches.
+ */
+
 import { Router } from "express";
-import { openrouter } from "@workspace/integrations-openrouter-ai";
+import { db } from "@workspace/db";
+import { farmingPlans } from "@workspace/db";
+import { and, eq, gt } from "drizzle-orm";
+import {
+  geocodeLocation,
+  fetchHistoricalWeather,
+  buildClimateProfile,
+  fetchForecast,
+  fetchCropWikiInfo,
+  fetchCountryContext,
+  type GeoResult,
+} from "../lib/open-data-fetcher";
+import { generateFarmingPlan, listAvailableCrops } from "../lib/gdd-engine";
 
 const router = Router();
 
-const MODEL_CHAIN = [
-  "deepseek/deepseek-chat-v3-0324:free",
-  "meta-llama/llama-3.1-8b-instruct:free",
-  "mistralai/mistral-7b-instruct:free",
-  "qwen/qwen2.5-7b-instruct:free",
-];
+const PLAN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days — recalculate when new data is available
 
-async function fetchWeatherData(location: string, lat?: number | null, lon?: number | null) {
+/**
+ * Check PostgreSQL for a cached plan that is still valid.
+ */
+async function getCachedPlan(crop: string, location: string, plantingDate: string) {
   try {
-    let coordinates: { lat: number; lon: number } | null = null;
-
-    if (lat && lon) {
-      coordinates = { lat, lon };
-    } else {
-      const geoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1&language=en&format=json`;
-      const geoResp = await fetch(geoUrl);
-      const geoData = (await geoResp.json()) as any;
-      if (geoData.results?.[0]) {
-        coordinates = {
-          lat: geoData.results[0].latitude,
-          lon: geoData.results[0].longitude,
-        };
-      }
-    }
-
-    if (!coordinates) return null;
-
-    const weatherUrl =
-      `https://api.open-meteo.com/v1/forecast` +
-      `?latitude=${coordinates.lat}&longitude=${coordinates.lon}` +
-      `&current=temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m,weather_code` +
-      `&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,wind_speed_10m_max,weather_code,uv_index_max` +
-      `&timezone=auto&forecast_days=16`;
-
-    const weatherResp = await fetch(weatherUrl);
-    if (!weatherResp.ok) return null;
-    return (await weatherResp.json()) as any;
+    const rows = await db
+      .select()
+      .from(farmingPlans)
+      .where(
+        and(
+          eq(farmingPlans.crop, crop.toLowerCase()),
+          eq(farmingPlans.location, location.toLowerCase()),
+          eq(farmingPlans.plantingDate, plantingDate),
+          gt(farmingPlans.expiresAt, new Date())
+        )
+      )
+      .limit(1);
+    return rows[0] ?? null;
   } catch {
     return null;
   }
 }
 
-function buildWeatherSummary(weatherData: any): string {
-  if (!weatherData) return "Weather data not available.";
-  const c = weatherData.current;
-  const d = weatherData.daily;
-
-  let summary = `Current conditions: ${c?.temperature_2m ?? "?"}°C, humidity ${c?.relative_humidity_2m ?? "?"}%, precipitation ${c?.precipitation ?? 0}mm, wind ${c?.wind_speed_10m ?? "?"}km/h.\n`;
-
-  if (d?.time?.length) {
-    const rows = d.time.slice(0, 10).map((date: string, i: number) =>
-      `  ${date}: max ${d.temperature_2m_max?.[i]}°C / min ${d.temperature_2m_min?.[i]}°C, rain ${d.precipitation_sum?.[i]}mm (${d.precipitation_probability_max?.[i]}% chance)`
-    );
-    summary += "10-day forecast:\n" + rows.join("\n");
-  }
-
-  return summary;
-}
-
-async function generatePlanWithAI(
+/**
+ * Persist a generated plan to PostgreSQL for future reuse.
+ */
+async function savePlan(
   crop: string,
-  plantingDate: string,
   location: string,
-  weatherData: any,
-  log: any,
-): Promise<any> {
-  const weatherSummary = buildWeatherSummary(weatherData);
-
-  const prompt = `You are an expert agronomist with deep knowledge of global crop production. Generate a complete, realistic farming plan based on verified agricultural data.
-
-CROP: ${crop}
-PLANTING DATE: ${plantingDate}
-LOCATION: ${location}
-
-LIVE WEATHER DATA (from Open-Meteo API):
-${weatherSummary}
-
-Using real-world data about ${crop} growth cycles, climate requirements for ${location}, and the weather conditions above, generate a detailed farming plan.
-
-Respond ONLY with valid JSON matching this exact structure (no markdown, no explanation, just the JSON object):
-
-{
-  "crop": "${crop}",
-  "location": "${location}",
-  "plantingDate": "${plantingDate}",
-  "totalGrowingDays": <integer based on real crop cycle>,
-  "estimatedHarvestStart": <integer day number>,
-  "estimatedHarvestEnd": <integer day number>,
-  "weatherRiskLevel": "low" | "medium" | "high",
-  "weatherRiskNotes": "<summary of current weather risks for this crop>",
-  "varietyRecommendation": "<recommended seed variety for this location>",
-  "expectedYield": "<realistic yield estimate per hectare>",
-  "stages": [
-    {
-      "id": "<unique id e.g. stage-1>",
-      "name": "<stage name>",
-      "type": "preparation" | "planting" | "germination" | "growth" | "fertilization" | "pest_control" | "irrigation" | "monitoring" | "harvest",
-      "startDay": <integer, 0 = planting date>,
-      "endDay": <integer>,
-      "description": "<what happens during this stage>",
-      "tasks": ["<specific actionable task>", ...],
-      "weatherConsiderations": "<what to watch for weather-wise>",
-      "inputsNeeded": ["<fertilizer/pesticide/tool needed>", ...],
-      "priority": "critical" | "high" | "medium"
-    }
-  ],
-  "milestones": [
-    {
-      "day": <integer>,
-      "label": "<short milestone name>",
-      "description": "<what to do or check on this day>",
-      "icon": "seedling" | "water" | "fertilizer" | "pest" | "harvest" | "monitor"
-    }
-  ],
-  "weatherAdjustments": [
-    {
-      "trigger": "<weather condition that triggers this>",
-      "impact": "delay" | "accelerate" | "skip" | "add_task",
-      "affectedStages": ["<stage name>"],
-      "action": "<specific action to take>"
-    }
-  ],
-  "fertilizerSchedule": [
-    {
-      "day": <integer>,
-      "product": "<fertilizer name>",
-      "rate": "<application rate per hectare>",
-      "method": "<how to apply>",
-      "purpose": "<why this fertilizer at this stage>"
-    }
-  ],
-  "pestAlerts": [
-    {
-      "name": "<pest or disease name>",
-      "riskPeriod": "<day range e.g. Day 20-40>",
-      "symptoms": "<how to identify>",
-      "treatment": "<recommended treatment>"
-    }
-  ]
-}
-
-Use only scientifically accurate growth periods for ${crop}. All day numbers must be realistic. Include 8-12 stages, 6-10 milestones, and complete fertilizer + pest schedules.`;
-
-  for (const model of MODEL_CHAIN) {
-    try {
-      const response = await (openrouter as any).chat.completions.create({
-        model,
-        max_tokens: 3000,
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.25,
-      });
-
-      const content = response.choices?.[0]?.message?.content as string | undefined;
-      if (!content) continue;
-
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) continue;
-
-      return JSON.parse(jsonMatch[0]);
-    } catch (err: any) {
-      log.warn({ model, err: err?.message }, "Farming plan model failed, trying next");
-    }
+  plantingDate: string,
+  planData: any,
+  climateProfile: any,
+  dataSourcesUsed: string[]
+) {
+  try {
+    await db.insert(farmingPlans).values({
+      crop: crop.toLowerCase(),
+      location: location.toLowerCase(),
+      plantingDate,
+      planData,
+      climateProfile,
+      dataSourcesUsed,
+      expiresAt: new Date(Date.now() + PLAN_TTL_MS),
+    });
+  } catch {
+    // Non-fatal
   }
-
-  throw new Error("All AI models failed to generate a plan");
 }
 
+/**
+ * POST /api/farming-plan/generate
+ *
+ * Generates a farming plan using open-source data only:
+ *   - Historical climate data → local GDD rates
+ *   - Forecast data → weather risk assessment
+ *   - GDD rule engine → stage timings (no hardcoded day numbers)
+ *   - Wikipedia API → crop info
+ *   - World Bank API → country context
+ *   - Results cached in PostgreSQL for 7 days
+ */
 router.post("/farming-plan/generate", async (req, res) => {
   const { crop, plantingDate, location, lat, lon } = req.body as {
     crop?: string;
@@ -185,62 +107,161 @@ router.post("/farming-plan/generate", async (req, res) => {
   }
 
   try {
-    const weatherData = await fetchWeatherData(location, lat, lon);
-    const plan = await generatePlanWithAI(crop, plantingDate, location, weatherData, req.log);
+    // 1. Check PostgreSQL cache first
+    const cached = await getCachedPlan(crop, location, plantingDate);
+    if (cached) {
+      req.log.info({ crop, location }, "Returning cached farming plan from PostgreSQL");
+      return res.json({
+        plan: cached.planData,
+        weatherData: null,
+        generatedAt: cached.generatedAt.toISOString(),
+        cached: true,
+        dataSourcesUsed: cached.dataSourcesUsed,
+      });
+    }
 
-    const responseWeather = weatherData
-      ? {
-          current: weatherData.current,
-          daily: weatherData.daily
-            ? {
-                dates: weatherData.daily.time?.slice(0, 16),
-                maxTemps: weatherData.daily.temperature_2m_max?.slice(0, 16),
-                minTemps: weatherData.daily.temperature_2m_min?.slice(0, 16),
-                precipitation: weatherData.daily.precipitation_sum?.slice(0, 16),
-                precipitationProbability: weatherData.daily.precipitation_probability_max?.slice(0, 16),
-                uvIndex: weatherData.daily.uv_index_max?.slice(0, 16),
-              }
-            : null,
-        }
-      : null;
+    // 2. Resolve coordinates from Open-Meteo Geocoding API (free, no key)
+    let geo: GeoResult | null = null;
+    if (lat && lon) {
+      geo = { lat, lon, name: location, country: "", countryCode: "", elevation: 0, timezone: "UTC" };
+    } else {
+      geo = await geocodeLocation(location);
+    }
 
-    res.json({ plan, weatherData: responseWeather, generatedAt: new Date().toISOString() });
+    if (!geo) {
+      return res.status(422).json({ error: `Could not resolve location: "${location}". Try a more specific place name.` });
+    }
+
+    // 3. Fetch all open data sources in parallel (no sequential blocking)
+    const [historical, forecast, wikiInfo, countryCtx] = await Promise.allSettled([
+      fetchHistoricalWeather(geo.lat, geo.lon),         // Open-Meteo Historical (ERA5, free)
+      fetchForecast(geo.lat, geo.lon),                  // Open-Meteo Forecast (free)
+      fetchCropWikiInfo(crop),                          // Wikipedia REST API (free)
+      geo.countryCode ? fetchCountryContext(geo.countryCode) : Promise.resolve(null),  // World Bank (free)
+    ]);
+
+    const historicalData = historical.status === "fulfilled" ? historical.value : null;
+    const forecastData = forecast.status === "fulfilled" ? forecast.value : [];
+    const wiki = wikiInfo.status === "fulfilled" ? wikiInfo.value : null;
+    const country = countryCtx.status === "fulfilled" ? countryCtx.value : null;
+
+    // 4. Build climate profile from historical weather
+    const climateProfile = buildClimateProfile(geo, historicalData ?? { dates: [], tempMax: [], tempMin: [], precipitation: [] });
+
+    // 5. Generate farming plan using GDD engine (rule-based, no AI)
+    const wikiExtract = wiki?.extract ?? null;
+    const plan = generateFarmingPlan(crop, plantingDate, location, climateProfile, forecastData, wikiExtract);
+
+    // Add country context if available
+    if (country) {
+      (plan as any).countryContext = {
+        name: country.name,
+        region: country.region,
+        incomeLevel: country.incomeLevel,
+        source: country.source,
+      };
+    }
+
+    // 6. Save to PostgreSQL for persistence (avoids refetching for 7 days)
+    await savePlan(crop, location, plantingDate, plan, climateProfile, plan.dataSourcesUsed);
+
+    // 7. Build forecast response
+    const forecastResponse = forecastData.length > 0 ? {
+      daily: {
+        dates: forecastData.map(d => d.date),
+        maxTemps: forecastData.map(d => d.tempMax),
+        minTemps: forecastData.map(d => d.tempMin),
+        precipitation: forecastData.map(d => d.precipitation),
+        precipitationProbability: forecastData.map(d => d.precipProbability),
+        uvIndex: forecastData.map(d => d.uvIndex),
+      },
+    } : null;
+
+    req.log.info({ crop, location, totalDays: plan.totalGrowingDays, sources: plan.dataSourcesUsed.length }, "Generated farming plan from open data");
+
+    res.json({
+      plan,
+      weatherData: forecastResponse,
+      generatedAt: new Date().toISOString(),
+      cached: false,
+      dataSourcesUsed: plan.dataSourcesUsed,
+    });
   } catch (err: any) {
     req.log.error({ err }, "Error generating farming plan");
     res.status(500).json({ error: "Failed to generate farming plan. Please try again." });
   }
 });
 
+/**
+ * GET /api/farming-plan/crops
+ *
+ * Returns the list of supported crops with their GDD data sources.
+ * All crop parameters are sourced from open agronomic literature.
+ */
 router.get("/farming-plan/crops", (_req, res) => {
-  const COMMON_CROPS = [
-    { name: "Rice", category: "Cereals", emoji: "🌾", growingDays: "90-120" },
-    { name: "Corn / Maize", category: "Cereals", emoji: "🌽", growingDays: "60-100" },
-    { name: "Wheat", category: "Cereals", emoji: "🌾", growingDays: "90-120" },
-    { name: "Tomato", category: "Vegetables", emoji: "🍅", growingDays: "60-85" },
-    { name: "Potato", category: "Tubers", emoji: "🥔", growingDays: "70-120" },
-    { name: "Cassava", category: "Tubers", emoji: "🌱", growingDays: "270-365" },
-    { name: "Sweet Potato", category: "Tubers", emoji: "🍠", growingDays: "90-120" },
-    { name: "Onion", category: "Vegetables", emoji: "🧅", growingDays: "100-120" },
-    { name: "Garlic", category: "Vegetables", emoji: "🧄", growingDays: "120-150" },
-    { name: "Cabbage", category: "Vegetables", emoji: "🥬", growingDays: "70-90" },
-    { name: "Eggplant", category: "Vegetables", emoji: "🍆", growingDays: "70-85" },
-    { name: "Pechay / Bok Choy", category: "Vegetables", emoji: "🥬", growingDays: "25-40" },
-    { name: "Soybean", category: "Legumes", emoji: "🫘", growingDays: "75-100" },
-    { name: "Mung Bean", category: "Legumes", emoji: "🫘", growingDays: "55-65" },
-    { name: "Banana", category: "Fruits", emoji: "🍌", growingDays: "270-365" },
-    { name: "Mango", category: "Fruits", emoji: "🥭", growingDays: "100-120" },
-    { name: "Pineapple", category: "Fruits", emoji: "🍍", growingDays: "450-600" },
-    { name: "Watermelon", category: "Fruits", emoji: "🍉", growingDays: "70-90" },
-    { name: "Sugarcane", category: "Cash Crops", emoji: "🌿", growingDays: "300-365" },
-    { name: "Coffee", category: "Cash Crops", emoji: "☕", growingDays: "180-270" },
-    { name: "Coconut", category: "Cash Crops", emoji: "🥥", growingDays: "365+" },
-    { name: "Cacao", category: "Cash Crops", emoji: "🍫", growingDays: "365+" },
-    { name: "Tobacco", category: "Cash Crops", emoji: "🌿", growingDays: "60-90" },
-    { name: "Cotton", category: "Cash Crops", emoji: "🌿", growingDays: "150-180" },
-    { name: "Peanut / Groundnut", category: "Oilseeds", emoji: "🥜", growingDays: "90-130" },
-    { name: "Sunflower", category: "Oilseeds", emoji: "🌻", growingDays: "70-100" },
-  ];
-  res.json(COMMON_CROPS);
+  res.json(listAvailableCrops());
+});
+
+/**
+ * GET /api/farming-plan/data-sources
+ *
+ * Returns the list of open data sources used by this system.
+ */
+router.get("/farming-plan/data-sources", (_req, res) => {
+  res.json({
+    description: "All agricultural intelligence is generated from free, open-source data only.",
+    sources: [
+      {
+        name: "Open-Meteo Historical Weather API",
+        url: "https://archive-api.open-meteo.com",
+        description: "ERA5 reanalysis data — 1-year historical daily weather for any location. Used to compute local GDD accumulation rates.",
+        license: "CC BY 4.0",
+        apiKey: false,
+      },
+      {
+        name: "Open-Meteo Forecast API",
+        url: "https://api.open-meteo.com",
+        description: "16-day weather forecast. Used for weather risk assessment.",
+        license: "CC BY 4.0",
+        apiKey: false,
+      },
+      {
+        name: "Open-Meteo Geocoding API",
+        url: "https://geocoding-api.open-meteo.com",
+        description: "Location name to coordinates. Free, no API key.",
+        license: "Open",
+        apiKey: false,
+      },
+      {
+        name: "Wikipedia REST API",
+        url: "https://en.wikipedia.org/api/rest_v1",
+        description: "Crop information and descriptions. Fully open.",
+        license: "CC BY-SA 3.0",
+        apiKey: false,
+      },
+      {
+        name: "World Bank Open Data API",
+        url: "https://api.worldbank.org/v2",
+        description: "Country-level agricultural and economic context.",
+        license: "CC BY 4.0",
+        apiKey: false,
+      },
+      {
+        name: "FAO Irrigation and Drainage Paper No. 56",
+        url: "https://www.fao.org/3/x0490e/x0490e00.htm",
+        description: "Scientific basis for ET₀ calculation (Hargreaves method) and crop coefficients.",
+        license: "Open access",
+        apiKey: false,
+      },
+      {
+        name: "GDD Crop Parameters",
+        url: "https://www.fao.org",
+        description: "Crop base temperatures and GDD phase thresholds from FAO Paper 56, USDA Agronomy Handbook, CIMMYT, IRRI, CIP, and ICRISAT open-access publications.",
+        license: "Open access scientific literature",
+        apiKey: false,
+      },
+    ],
+  });
 });
 
 export default router;
