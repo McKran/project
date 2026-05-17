@@ -8,11 +8,11 @@
  *   4. World Bank Open Data API — country context
  *   5. GDD-based rule engine — scientifically grounded, no AI calls
  *
- * PSGC STRICT MODE: location is resolved exclusively from PSGC codes.
- * No free-text location is accepted. Missing PSGC data blocks plan generation.
+ * Location: lat/lon coordinates only. Defaults to Manila (14.5995, 120.9842) if not provided.
+ * No PSGC codes required — any Philippine location with coordinates works.
  *
  * NO AI models, NO hardcoded timelines, NO paid or restricted APIs.
- * Plans are persisted in PostgreSQL to avoid redundant data fetches.
+ * Plans are persisted in PostgreSQL keyed by lat/lon to avoid redundant data fetches.
  */
 
 import { Router } from "express";
@@ -31,11 +31,16 @@ import { generateFarmingPlan, listAvailableCrops } from "../lib/gdd-engine";
 
 const router = Router();
 
+// Default: Manila, Philippines
+const PH_DEFAULT_LAT = 14.5995;
+const PH_DEFAULT_LON = 120.9842;
 const PLAN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
-/**
- * Check PostgreSQL for a cached plan by PSGC code + crop + plantingDate.
- */
+/** Round to 2 decimal places to form a stable cache key from coordinates */
+function toLocationKey(lat: number, lon: number): string {
+  return `${lat.toFixed(2)}_${lon.toFixed(2)}`;
+}
+
 async function getCachedPlan(crop: string, locationKey: string, plantingDate: string) {
   try {
     const rows = await db
@@ -56,9 +61,6 @@ async function getCachedPlan(crop: string, locationKey: string, plantingDate: st
   }
 }
 
-/**
- * Persist a generated plan to PostgreSQL keyed by PSGC code.
- */
 async function savePlan(
   crop: string,
   locationKey: string,
@@ -85,38 +87,33 @@ async function savePlan(
 /**
  * POST /api/farming-plan/generate
  *
- * PSGC-strict: requires regionCode + provinceCode. cityCode preferred.
- * Rejects requests with missing PSGC location data.
- *
  * Body:
- *   crop, plantingDate (required)
- *   regionCode, provinceCode (required — PSGC)
- *   cityCode, cityName, provinceName, regionName (from onboarding)
- *   lat, lon (from PSGC geocoding, preferred over name-based geocoding)
+ *   crop         (required)  — crop name
+ *   plantingDate (required)  — ISO date string
+ *   lat          (optional)  — latitude, defaults to Manila
+ *   lon          (optional)  — longitude, defaults to Manila
+ *   locationName (optional)  — human-readable location label
  */
 router.post("/farming-plan/generate", async (req, res) => {
   const {
     crop,
     plantingDate,
-    regionCode,
-    provinceCode,
-    cityCode,
+    lat: rawLat,
+    lon: rawLon,
+    locationName,
+    // Legacy PSGC fields — accepted but not required, used for display only
     cityName,
     provinceName,
     regionName,
-    lat,
-    lon,
   } = req.body as {
     crop?: string;
     plantingDate?: string;
-    regionCode?: string;
-    provinceCode?: string;
-    cityCode?: string;
+    lat?: number | null;
+    lon?: number | null;
+    locationName?: string;
     cityName?: string;
     provinceName?: string;
     regionName?: string;
-    lat?: number | null;
-    lon?: number | null;
   };
 
   if (!crop || !plantingDate) {
@@ -124,84 +121,44 @@ router.post("/farming-plan/generate", async (req, res) => {
     return;
   }
 
-  // PSGC strict validation
-  if (!regionCode || !provinceCode) {
-    res.status(422).json({
-      error:
-        "PSGC location data is required. Please complete onboarding to set your region and province.",
-      code: "PSGC_MISSING",
-    });
-    return;
-  }
+  // Resolve coordinates — use provided or fall back to Manila
+  const lat = rawLat != null && !isNaN(Number(rawLat)) ? Number(rawLat) : PH_DEFAULT_LAT;
+  const lon = rawLon != null && !isNaN(Number(rawLon)) ? Number(rawLon) : PH_DEFAULT_LON;
 
-  // Use PSGC code as stable cache key
-  const locationKey = cityCode || provinceCode;
-  const locationDisplay = [cityName, provinceName, regionName, "Philippines"]
-    .filter(Boolean)
-    .join(", ");
+  const locationKey = toLocationKey(lat, lon);
+
+  // Best display name from whatever info is available
+  const locationDisplay =
+    locationName ||
+    [cityName, provinceName, regionName, "Philippines"].filter(Boolean).join(", ") ||
+    `${lat.toFixed(2)}°N, ${lon.toFixed(2)}°E, Philippines`;
 
   try {
     // 1. Check PostgreSQL cache first
     const cached = await getCachedPlan(crop, locationKey, plantingDate);
     if (cached) {
-      req.log.info({ crop, locationKey }, "Returning cached farming plan from PostgreSQL");
-      return res.json({
+      req.log.info({ crop, locationKey }, "Returning cached farming plan");
+      res.json({
         plan: cached.planData,
         weatherData: null,
         generatedAt: cached.generatedAt.toISOString(),
         cached: true,
         dataSourcesUsed: cached.dataSourcesUsed,
-        location: { display: locationDisplay, cityCode, provinceCode, regionCode },
+        location: { display: locationDisplay, lat, lon },
       });
+      return;
     }
 
-    // 2. Resolve coordinates — prefer PSGC-geocoded lat/lon from onboarding
-    let geo: GeoResult | null = null;
-
-    if (lat != null && lon != null) {
-      geo = {
-        lat,
-        lon,
-        name: cityName || provinceName || regionName || "Philippines",
-        country: "Philippines",
-        countryCode: "PH",
-        elevation: 0,
-        timezone: "Asia/Manila",
-      };
-    } else {
-      // Fallback: geocode by name derived from PSGC labels
-      const searchTerm = [cityName, provinceName, "Philippines"].filter(Boolean).join(", ");
-      try {
-        const geoRes = await fetch(
-          `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(searchTerm)}&count=1&language=en&format=json`,
-          { signal: AbortSignal.timeout(8000) }
-        );
-        if (geoRes.ok) {
-          const geoData: any = await geoRes.json();
-          const r = geoData.results?.[0];
-          if (r) {
-            geo = {
-              lat: r.latitude,
-              lon: r.longitude,
-              name: r.name,
-              country: "Philippines",
-              countryCode: "PH",
-              elevation: r.elevation ?? 0,
-              timezone: r.timezone ?? "Asia/Manila",
-            };
-          }
-        }
-      } catch {
-        // Geocoding failed — continue, will error below
-      }
-    }
-
-    if (!geo) {
-      return res.status(422).json({
-        error: `Could not resolve coordinates for ${locationDisplay}. Ensure location coordinates are set during onboarding.`,
-        code: "GEOCODE_FAILED",
-      });
-    }
+    // 2. Build GeoResult from coordinates
+    const geo: GeoResult = {
+      lat,
+      lon,
+      name: locationDisplay,
+      country: "Philippines",
+      countryCode: "PH",
+      elevation: 0,
+      timezone: "Asia/Manila",
+    };
 
     // 3. Fetch all open data sources in parallel
     const [historical, forecast, wikiInfo, countryCtx] = await Promise.allSettled([
@@ -216,13 +173,13 @@ router.post("/farming-plan/generate", async (req, res) => {
     const wiki = wikiInfo.status === "fulfilled" ? wikiInfo.value : null;
     const country = countryCtx.status === "fulfilled" ? countryCtx.value : null;
 
-    // 4. Build climate profile from historical weather
+    // 4. Build climate profile
     const climateProfile = buildClimateProfile(
       geo,
       historicalData ?? { dates: [], tempMax: [], tempMin: [], precipitation: [] }
     );
 
-    // 5. Generate farming plan using GDD engine (rule-based, no AI)
+    // 5. Generate farming plan (GDD engine — no AI)
     const plan = generateFarmingPlan(
       crop,
       plantingDate,
@@ -240,17 +197,6 @@ router.post("/farming-plan/generate", async (req, res) => {
         source: country.source,
       };
     }
-
-    // Embed PSGC location metadata in plan
-    (plan as any).psgcLocation = {
-      regionCode,
-      provinceCode,
-      cityCode: cityCode || null,
-      cityName: cityName || null,
-      provinceName: provinceName || null,
-      regionName: regionName || null,
-      display: locationDisplay,
-    };
 
     // 6. Save to PostgreSQL
     await savePlan(crop, locationKey, plantingDate, plan, climateProfile, plan.dataSourcesUsed);
@@ -271,8 +217,8 @@ router.post("/farming-plan/generate", async (req, res) => {
         : null;
 
     req.log.info(
-      { crop, cityCode, provinceCode, regionCode, totalDays: plan.totalGrowingDays },
-      "Generated farming plan from PSGC-bound location"
+      { crop, lat, lon, locationKey, totalDays: plan.totalGrowingDays },
+      "Generated farming plan"
     );
 
     res.json({
@@ -281,7 +227,7 @@ router.post("/farming-plan/generate", async (req, res) => {
       generatedAt: new Date().toISOString(),
       cached: false,
       dataSourcesUsed: plan.dataSourcesUsed,
-      location: { display: locationDisplay, cityCode, provinceCode, regionCode },
+      location: { display: locationDisplay, lat, lon },
     });
   } catch (err: any) {
     req.log.error({ err }, "Error generating farming plan");
@@ -291,6 +237,7 @@ router.post("/farming-plan/generate", async (req, res) => {
 
 /**
  * GET /api/farming-plan/crops
+ * Returns all crops known to the GDD engine.
  */
 router.get("/farming-plan/crops", (_req, res) => {
   res.json(listAvailableCrops());
@@ -315,13 +262,6 @@ router.get("/farming-plan/data-sources", (_req, res) => {
         url: "https://api.open-meteo.com",
         description: "16-day weather forecast for weather risk assessment.",
         license: "CC BY 4.0",
-        apiKey: false,
-      },
-      {
-        name: "PSGC (Philippine Standard Geographic Code)",
-        url: "https://psgc.gitlab.io/api",
-        description: "Official Philippine location codes. Farm location is locked to PSGC.",
-        license: "Open Government Data",
         apiKey: false,
       },
       {

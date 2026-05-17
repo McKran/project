@@ -1,15 +1,13 @@
-import { useState, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useSettings } from "@/hooks/use-settings";
-import { useLocation } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Sprout, Calendar, MapPin, Loader2, AlertCircle, ChevronDown, ChevronUp,
-  Droplets, Bug, Wheat, Sun, Cloud, CloudRain, Wind, ThermometerSun,
-  CheckCircle2, Clock, Zap, Leaf, FlaskConical, Shield, Activity,
-  TriangleAlert, Info, RefreshCw, ClipboardList
+  Droplets, Bug, Wheat, Cloud, FlaskConical, Shield, Activity,
+  TriangleAlert, Info, RefreshCw, ClipboardList, CheckCircle2,
+  Clock, Zap, Leaf, ThermometerSun
 } from "lucide-react";
 
 const BASE_URL = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
@@ -31,24 +29,17 @@ const MILESTONE_ICON_MAP: Record<string, React.ElementType> = {
   pest: Bug, harvest: Wheat, monitor: Activity,
 };
 
-const COMMON_CROPS = [
-  { name: "Rice", emoji: "🌾", category: "Cereals" },
-  { name: "Corn / Maize", emoji: "🌽", category: "Cereals" },
-  { name: "Wheat", emoji: "🌾", category: "Cereals" },
-  { name: "Tomato", emoji: "🍅", category: "Vegetables" },
-  { name: "Potato", emoji: "🥔", category: "Tubers" },
-  { name: "Cassava", emoji: "🌱", category: "Tubers" },
-  { name: "Onion", emoji: "🧅", category: "Vegetables" },
-  { name: "Eggplant", emoji: "🍆", category: "Vegetables" },
-  { name: "Soybean", emoji: "🫘", category: "Legumes" },
-  { name: "Banana", emoji: "🍌", category: "Fruits" },
-  { name: "Mango", emoji: "🥭", category: "Fruits" },
-  { name: "Watermelon", emoji: "🍉", category: "Fruits" },
-  { name: "Sugarcane", emoji: "🌿", category: "Cash Crops" },
-  { name: "Coffee", emoji: "☕", category: "Cash Crops" },
-  { name: "Peanut / Groundnut", emoji: "🥜", category: "Oilseeds" },
-  { name: "Sweet Potato", emoji: "🍠", category: "Tubers" },
+// Categories to highlight in the crop selector
+const FEATURED_CATEGORIES = [
+  "Grains & Staples",
+  "Vegetables",
+  "Fruits",
+  "Root Crops",
+  "Legumes & Others",
+  "Herbs & Spices",
 ];
+
+interface PhCrop { id: number; cropName: string; localName?: string | null; category: string; emoji: string; }
 
 interface FarmingStage {
   id: string; name: string; type: string;
@@ -59,7 +50,7 @@ interface FarmingStage {
 interface Milestone { day: number; label: string; description: string; icon: string; }
 interface WeatherAdjustment { trigger: string; impact: string; affectedStages: string[]; action: string; }
 interface FertilizerItem { day: number; product: string; rate: string; method: string; purpose: string; }
-interface PestAlert { name: string; riskPeriod: string; symptoms: string; treatment: string; }
+interface PestAlert { name: string; riskPeriod: string; symptoms: string; treatment: string; riskActive?: boolean; }
 interface FarmingPlan {
   crop: string; location: string; plantingDate: string;
   totalGrowingDays: number; estimatedHarvestStart: number; estimatedHarvestEnd: number;
@@ -67,11 +58,9 @@ interface FarmingPlan {
   varietyRecommendation?: string; expectedYield?: string;
   stages: FarmingStage[]; milestones: Milestone[];
   weatherAdjustments: WeatherAdjustment[];
-  fertilizerSchedule?: FertilizerItem[]; pestAlerts?: PestAlert[];
-  psgcLocation?: {
-    regionCode: string; provinceCode: string; cityCode?: string;
-    cityName?: string; provinceName?: string; regionName?: string; display: string;
-  };
+  fertilizerSchedule?: FertilizerItem[];
+  pestAlerts?: PestAlert[];
+  climateAdaptedNote?: string;
 }
 interface PlanResponse {
   plan: FarmingPlan;
@@ -82,7 +71,7 @@ interface PlanResponse {
     } | null;
   } | null;
   generatedAt: string;
-  location?: { display: string; cityCode?: string; provinceCode: string; regionCode: string };
+  location?: { display: string; lat?: number; lon?: number };
 }
 
 function RiskBadge({ level }: { level: string }) {
@@ -201,12 +190,33 @@ function TimelineBar({ plan }: { plan: FarmingPlan }) {
 
 export default function FarmingPlan() {
   const { settings } = useSettings();
-  const [, navigate] = useLocation();
 
-  // ─── PSGC strict gate ───────────────────────────────────────────────────────
-  const hasPsgcLocation = !!(settings.regionCode && settings.provinceCode);
+  // Location — use stored coordinates if available, else Manila default
+  const lat = settings.cityLat ?? 14.5995;
+  const lon = settings.cityLon ?? 120.9842;
   const locationDisplay = [settings.cityName, settings.provinceName, settings.regionName, "Philippines"]
-    .filter(Boolean).join(", ");
+    .filter(Boolean).join(", ") || "Philippines";
+
+  // Crops loaded dynamically from PostgreSQL via API
+  const [allCrops, setAllCrops] = useState<PhCrop[]>([]);
+  const [cropsLoading, setCropsLoading] = useState(true);
+  const [activeCatFilter, setActiveCatFilter] = useState<string>("all");
+  const [showAllCrops, setShowAllCrops] = useState(false);
+
+  useEffect(() => {
+    fetch(`${BASE_URL}/api/ph-crops`)
+      .then(r => r.ok ? r.json() : [])
+      .then((data: PhCrop[]) => { setAllCrops(data); setCropsLoading(false); })
+      .catch(() => setCropsLoading(false));
+  }, []);
+
+  // Visible crops in selector grid
+  const filteredCrops = activeCatFilter === "all"
+    ? allCrops
+    : allCrops.filter(c => c.category === activeCatFilter);
+  const GRID_LIMIT = 24;
+  const visibleCrops = showAllCrops ? filteredCrops : filteredCrops.slice(0, GRID_LIMIT);
+  const categoriesInDb = [...new Set(allCrops.map(c => c.category))];
 
   const [crop, setCrop] = useState(settings.preferredCrops[0] ?? "");
   const [plantingDate, setPlantingDate] = useState(() => {
@@ -218,33 +228,7 @@ export default function FarmingPlan() {
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"timeline" | "weather" | "fertilizer" | "pests" | "adjustments">("timeline");
 
-  // PSGC gate — block plan generation if no PSGC location, redirect to onboarding/settings
-  if (!hasPsgcLocation) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-6 text-center px-4">
-        <div className="h-16 w-16 rounded-2xl bg-amber-100 dark:bg-amber-950/40 flex items-center justify-center">
-          <MapPin className="h-8 w-8 text-amber-600 dark:text-amber-400" />
-        </div>
-        <div>
-          <h2 className="text-xl font-bold mb-2">PSGC Location Required</h2>
-          <p className="text-muted-foreground text-sm max-w-sm leading-relaxed">
-            The Farm Planner requires your official PSGC location (region and province) to generate accurate, climate-specific farming schedules tied to Philippine geography.
-          </p>
-        </div>
-        <div className="flex flex-col gap-3 w-full max-w-xs">
-          <Button onClick={() => navigate("/settings")} className="gap-2">
-            <MapPin className="h-4 w-4" /> Go to Settings
-          </Button>
-          <p className="text-xs text-muted-foreground">
-            Your location is set during onboarding using official PSGC data (Region → Province → City/Municipality).
-          </p>
-        </div>
-      </div>
-    );
-  }
-  // ────────────────────────────────────────────────────────────────────────────
-
-  const handleGenerate = async () => {
+  const handleGenerate = useCallback(async () => {
     if (!crop || !plantingDate) return;
     setLoading(true);
     setError(null);
@@ -257,29 +241,21 @@ export default function FarmingPlan() {
         body: JSON.stringify({
           crop,
           plantingDate,
-          // PSGC location — always from onboarding settings, never free-text
-          regionCode: settings.regionCode,
-          provinceCode: settings.provinceCode,
-          cityCode: settings.cityCode || undefined,
+          lat,
+          lon,
+          locationName: locationDisplay,
+          // Pass legacy display fields for a richer label if available
           cityName: settings.cityName || undefined,
           provinceName: settings.provinceName || undefined,
           regionName: settings.regionName || undefined,
-          lat: settings.cityLat,
-          lon: settings.cityLon,
         }),
       });
 
       const data = await res.json();
-
       if (!res.ok) {
-        if (data.code === "PSGC_MISSING") {
-          navigate("/settings");
-          return;
-        }
         setError(data.error ?? "Failed to generate plan.");
         return;
       }
-
       setResult(data);
       setActiveTab("timeline");
     } catch {
@@ -287,7 +263,7 @@ export default function FarmingPlan() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [crop, plantingDate, lat, lon, locationDisplay, settings]);
 
   const plan = result?.plan;
 
@@ -306,60 +282,105 @@ export default function FarmingPlan() {
           <ClipboardList className="h-6 w-6 text-primary" /> Farm Planner
         </h1>
         <p className="text-muted-foreground text-sm mt-1">
-          GDD-based farming schedules using real open climate data.
+          GDD-based farming schedules using real open climate data — no AI, no guesswork.
         </p>
       </div>
 
-      {/* PSGC Location Badge — locked, read-only */}
+      {/* Location indicator */}
       <div className="flex items-center gap-3 px-4 py-3 bg-primary/5 border border-primary/20 rounded-2xl">
         <MapPin className="h-4 w-4 text-primary shrink-0" />
         <div className="flex-1 min-w-0">
           <div className="text-sm font-semibold truncate">{locationDisplay}</div>
           <div className="text-xs text-muted-foreground flex items-center gap-1.5 flex-wrap mt-0.5">
-            <span>Region: <span className="font-mono">{settings.regionCode}</span></span>
-            <span>·</span>
-            <span>Province: <span className="font-mono">{settings.provinceCode}</span></span>
-            {settings.cityCode && <><span>·</span><span>City: <span className="font-mono">{settings.cityCode}</span></span></>}
-            {settings.cityLat != null && <><span>·</span><span className="text-primary/70 font-medium">GPS verified</span></>}
+            <ThermometerSun className="h-3 w-3" />
+            <span>Weather data from Open-Meteo for {lat.toFixed(3)}°N, {lon.toFixed(3)}°E</span>
+            {settings.cityLat != null && (
+              <Badge variant="secondary" className="text-[10px]">GPS set</Badge>
+            )}
           </div>
         </div>
-        <Badge variant="secondary" className="text-[10px] shrink-0">PSGC</Badge>
       </div>
 
-      {/* Plan Generator */}
+      {/* Plan Generator Card */}
       <Card className="border-none shadow-sm">
         <CardHeader className="pb-4">
           <CardTitle className="text-base flex items-center gap-2">
             <Sprout className="h-4 w-4 text-primary" /> Generate Farming Plan
           </CardTitle>
           <CardDescription className="text-xs">
-            Plan is generated from real climate data for your PSGC-verified location. No AI used — pure GDD engine.
+            Real ERA5 climate data for your location · GDD engine · No AI — pure science.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
+
           {/* Crop Selection */}
           <div>
             <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground block mb-2">
               Select Crop
             </label>
-            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2 mb-3">
-              {COMMON_CROPS.map((c) => (
-                <button key={c.name} onClick={() => setCrop(c.name)}
-                  className={`flex flex-col items-center gap-1 p-2.5 rounded-xl text-xs border transition-all ${
-                    crop === c.name
-                      ? "bg-primary/10 border-primary/40 text-primary font-semibold"
-                      : "bg-muted/30 border-transparent hover:bg-muted/60 text-muted-foreground"
+
+            {/* Category filter tabs */}
+            {!cropsLoading && categoriesInDb.length > 0 && (
+              <div className="flex gap-1.5 overflow-x-auto pb-2 mb-3">
+                <button
+                  onClick={() => { setActiveCatFilter("all"); setShowAllCrops(false); }}
+                  className={`shrink-0 text-xs px-3 py-1.5 rounded-full border transition-all ${
+                    activeCatFilter === "all"
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "bg-muted/50 text-muted-foreground border-transparent hover:bg-muted"
                   }`}
-                >
-                  <span className="text-xl">{c.emoji}</span>
-                  <span className="text-center leading-tight">{c.name.split(" / ")[0]}</span>
-                </button>
-              ))}
-            </div>
+                >All</button>
+                {categoriesInDb.map(cat => (
+                  <button key={cat}
+                    onClick={() => { setActiveCatFilter(cat); setShowAllCrops(false); }}
+                    className={`shrink-0 text-xs px-3 py-1.5 rounded-full border transition-all whitespace-nowrap ${
+                      activeCatFilter === cat
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "bg-muted/50 text-muted-foreground border-transparent hover:bg-muted"
+                    }`}
+                  >{cat}</button>
+                ))}
+              </div>
+            )}
+
+            {/* Crop grid */}
+            {cropsLoading ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
+                <Loader2 className="h-4 w-4 animate-spin" /> Loading crops from database…
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2 mb-2">
+                  {visibleCrops.map((c) => (
+                    <button key={c.id} onClick={() => setCrop(c.cropName)}
+                      className={`flex flex-col items-center gap-1 p-2.5 rounded-xl text-xs border transition-all ${
+                        crop === c.cropName
+                          ? "bg-primary/10 border-primary/40 text-primary font-semibold"
+                          : "bg-muted/30 border-transparent hover:bg-muted/60 text-muted-foreground"
+                      }`}
+                    >
+                      <span className="text-xl">{c.emoji}</span>
+                      <span className="text-center leading-tight">{c.cropName.split(" (")[0].split(" / ")[0]}</span>
+                    </button>
+                  ))}
+                </div>
+                {filteredCrops.length > GRID_LIMIT && (
+                  <button
+                    onClick={() => setShowAllCrops(v => !v)}
+                    className="text-xs text-primary hover:underline mt-1"
+                  >
+                    {showAllCrops
+                      ? "Show fewer crops"
+                      : `Show all ${filteredCrops.length} crops in this category`}
+                  </button>
+                )}
+              </>
+            )}
+
             <input
               type="text" value={crop} onChange={(e) => setCrop(e.target.value)}
-              placeholder="Or type a crop name…"
-              className="w-full px-3 py-2 rounded-xl border bg-muted/40 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:bg-background"
+              placeholder="Or type any crop name…"
+              className="w-full mt-3 px-3 py-2 rounded-xl border bg-muted/40 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:bg-background"
             />
           </div>
 
@@ -376,7 +397,7 @@ export default function FarmingPlan() {
             </div>
           </div>
 
-          {/* Preferred crops quick-select */}
+          {/* Preferred crops from profile */}
           {settings.preferredCrops.length > 0 && (
             <div>
               <label className="text-xs text-muted-foreground block mb-2">Your crops from profile:</label>
@@ -386,9 +407,7 @@ export default function FarmingPlan() {
                     className={`text-xs px-3 py-1.5 rounded-full border transition-all ${
                       crop === c ? "bg-primary text-primary-foreground border-primary" : "bg-muted/50 hover:bg-muted border-transparent text-muted-foreground"
                     }`}
-                  >
-                    {c}
-                  </button>
+                  >{c}</button>
                 ))}
               </div>
             </div>
@@ -410,8 +429,8 @@ export default function FarmingPlan() {
 
           {loading && (
             <div className="text-center text-xs text-muted-foreground space-y-1">
-              <p>Fetching weather history and forecast from Open-Meteo…</p>
-              <p>Computing GDD accumulation rates for {settings.cityName || settings.provinceName}…</p>
+              <p>Fetching ERA5 climate history and 16-day forecast from Open-Meteo…</p>
+              <p>Computing GDD accumulation for {settings.cityName || locationDisplay}…</p>
             </div>
           )}
         </CardContent>
@@ -420,21 +439,27 @@ export default function FarmingPlan() {
       {/* Plan Result */}
       {plan && (
         <div className="space-y-4">
-          {/* Summary */}
+          {/* Summary Card */}
           <Card className="border-none shadow-sm bg-gradient-to-br from-emerald-50 to-green-100/60 dark:from-emerald-950/40 dark:to-green-950/20">
             <CardContent className="pt-5">
               <div className="flex items-start justify-between gap-4 flex-wrap">
                 <div>
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-2xl">{COMMON_CROPS.find(c => c.name.toLowerCase().includes(plan.crop.toLowerCase()))?.emoji ?? "🌱"}</span>
+                    <span className="text-2xl">
+                      {allCrops.find(c => c.cropName.toLowerCase() === plan.crop.toLowerCase())?.emoji ?? "🌱"}
+                    </span>
                     <h2 className="text-xl font-bold capitalize">{plan.crop}</h2>
                     <RiskBadge level={plan.weatherRiskLevel} />
                   </div>
                   <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                     <MapPin className="h-3 w-3" />
                     <span>{result?.location?.display || locationDisplay}</span>
-                    <Badge variant="secondary" className="text-[10px]">PSGC</Badge>
                   </div>
+                  {plan.expectedYield && (
+                    <div className="mt-1 text-xs text-emerald-700 dark:text-emerald-400 font-medium">
+                      Expected yield: {plan.expectedYield}
+                    </div>
+                  )}
                 </div>
                 <div className="flex gap-4 flex-wrap">
                   <div className="text-center">
@@ -454,8 +479,22 @@ export default function FarmingPlan() {
                   <span>{plan.weatherRiskNotes}</span>
                 </div>
               )}
+              {plan.climateAdaptedNote && (
+                <div className="mt-2 flex items-start gap-2 text-xs text-muted-foreground bg-white/50 dark:bg-black/20 rounded-xl p-3">
+                  <ThermometerSun className="h-3.5 w-3.5 mt-0.5 shrink-0 text-amber-500" />
+                  <span>{plan.climateAdaptedNote}</span>
+                </div>
+              )}
             </CardContent>
           </Card>
+
+          {/* Variety Recommendation */}
+          {plan.varietyRecommendation && (
+            <div className="flex items-start gap-3 px-4 py-3 bg-blue-50/60 dark:bg-blue-950/20 border border-blue-200/60 dark:border-blue-800/40 rounded-2xl text-xs">
+              <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-blue-500" />
+              <span className="text-muted-foreground leading-relaxed">{plan.varietyRecommendation}</span>
+            </div>
+          )}
 
           {/* Tabs */}
           <div className="flex gap-1 overflow-x-auto pb-1">
@@ -593,10 +632,14 @@ export default function FarmingPlan() {
                 {plan.pestAlerts && plan.pestAlerts.length > 0 ? (
                   <div className="space-y-3">
                     {plan.pestAlerts.map((pest, i) => (
-                      <div key={i} className="p-4 bg-rose-50/60 dark:bg-rose-950/20 border border-rose-200/60 dark:border-rose-800/40 rounded-2xl">
+                      <div key={i} className={`p-4 rounded-2xl border ${pest.riskActive ? "bg-rose-50/80 dark:bg-rose-950/30 border-rose-300/60 dark:border-rose-700/40" : "bg-muted/30 border-border"}`}>
                         <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
-                          <div className="font-semibold text-sm flex items-center gap-2"><Bug className="h-4 w-4 text-rose-500" />{pest.name}</div>
-                          <Badge variant="outline" className="text-[10px] text-rose-600 border-rose-300">{pest.riskPeriod}</Badge>
+                          <div className="font-semibold text-sm flex items-center gap-2">
+                            <Bug className={`h-4 w-4 ${pest.riskActive ? "text-rose-500" : "text-muted-foreground"}`} />
+                            {pest.name}
+                            {pest.riskActive && <Badge className="text-[10px] bg-rose-100 text-rose-700 border-rose-200">Active Risk</Badge>}
+                          </div>
+                          <Badge variant="outline" className="text-[10px] text-muted-foreground">{pest.riskPeriod}</Badge>
                         </div>
                         <div className="text-xs text-muted-foreground space-y-1">
                           <p><span className="font-medium">Symptoms:</span> {pest.symptoms}</p>
@@ -615,7 +658,7 @@ export default function FarmingPlan() {
             <Card className="border-none shadow-sm">
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm flex items-center gap-2"><RefreshCw className="h-4 w-4 text-amber-500" /> Weather Adjustment Rules</CardTitle>
-                <CardDescription>How your plan automatically adapts to changing weather conditions</CardDescription>
+                <CardDescription>How your plan adapts to changing weather conditions</CardDescription>
               </CardHeader>
               <CardContent>
                 {plan.weatherAdjustments.length > 0 ? (
@@ -623,14 +666,11 @@ export default function FarmingPlan() {
                     {plan.weatherAdjustments.map((adj, i) => (
                       <div key={i} className="p-4 bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200/60 dark:border-amber-800/40 rounded-2xl">
                         <div className="flex items-center gap-2 mb-2 flex-wrap">
-                          <Badge className={`text-[10px] ${adj.impact === "delay" ? "bg-amber-100 text-amber-700 border-amber-200" : adj.impact === "add_task" ? "bg-blue-100 text-blue-700 border-blue-200" : "bg-rose-100 text-rose-700 border-rose-200"}`}>
-                            {adj.impact?.replace("_", " ")}
-                          </Badge>
                           <span className="text-xs font-semibold">{adj.trigger}</span>
                         </div>
-                        <p className="text-xs text-muted-foreground">{adj.action}</p>
+                        <p className="text-xs text-muted-foreground mb-2">{adj.action}</p>
                         {adj.affectedStages?.length > 0 && (
-                          <div className="flex flex-wrap gap-1 mt-2">
+                          <div className="flex flex-wrap gap-1">
                             {adj.affectedStages.map((s, j) => <Badge key={j} variant="secondary" className="text-[10px]">{s}</Badge>)}
                           </div>
                         )}
@@ -643,8 +683,8 @@ export default function FarmingPlan() {
           )}
 
           <p className="text-[10px] text-muted-foreground text-center">
-            Plan generated {new Date(result.generatedAt).toLocaleString()} · Location locked to PSGC {settings.cityCode || settings.provinceCode} ·
-            Weather from Open-Meteo · Crop data from verified research.
+            Plan generated {new Date(result.generatedAt).toLocaleString()} ·
+            Weather from Open-Meteo ERA5 · GDD model from FAO Paper No. 56 ·
             Always validate with a local agronomist before major farming decisions.
           </p>
         </div>

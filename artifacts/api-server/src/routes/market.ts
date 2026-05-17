@@ -97,6 +97,40 @@ const GLOBAL_BASE_PRICES_USD_PER_TON: Record<string, { local: number; intl: numb
   "Cardamom": { local: 18000, intl: 22000, category: "Nuts & Spices", unit: "ton" },
   "Ginger": { local: 1200, intl: 1500, category: "Nuts & Spices", unit: "ton" },
   "Turmeric": { local: 1800, intl: 2200, category: "Nuts & Spices", unit: "ton" },
+
+  // ── Philippine-Specific Crops ─────────────────────────────────────────────
+  // Vegetables
+  "Ampalaya": { local: 680, intl: 840, category: "Philippine Vegetables", unit: "ton" },
+  "Pechay": { local: 480, intl: 600, category: "Philippine Vegetables", unit: "ton" },
+  "Kangkong": { local: 380, intl: 480, category: "Philippine Vegetables", unit: "ton" },
+  "Malunggay": { local: 520, intl: 650, category: "Philippine Vegetables", unit: "ton" },
+  "Okra": { local: 540, intl: 670, category: "Philippine Vegetables", unit: "ton" },
+  "Squash (Kalabasa)": { local: 240, intl: 300, category: "Philippine Vegetables", unit: "ton" },
+  "String Beans (Sitaw)": { local: 580, intl: 720, category: "Philippine Vegetables", unit: "ton" },
+  "Patola": { local: 420, intl: 530, category: "Philippine Vegetables", unit: "ton" },
+  "Upo": { local: 380, intl: 480, category: "Philippine Vegetables", unit: "ton" },
+  "Sayote": { local: 320, intl: 400, category: "Philippine Vegetables", unit: "ton" },
+  "Mustasa": { local: 420, intl: 530, category: "Philippine Vegetables", unit: "ton" },
+  "Chili (Sili)": { local: 1200, intl: 1500, category: "Philippine Vegetables", unit: "ton" },
+  // Fruits
+  "Calamansi": { local: 1100, intl: 1380, category: "Philippine Fruits", unit: "ton" },
+  "Durian": { local: 1400, intl: 1750, category: "Philippine Fruits", unit: "ton" },
+  "Jackfruit (Langka)": { local: 680, intl: 850, category: "Philippine Fruits", unit: "ton" },
+  "Lanzones": { local: 1200, intl: 1500, category: "Philippine Fruits", unit: "ton" },
+  "Rambutan": { local: 780, intl: 980, category: "Philippine Fruits", unit: "ton" },
+  "Mangosteen": { local: 2200, intl: 2800, category: "Philippine Fruits", unit: "ton" },
+  "Dragon Fruit": { local: 1600, intl: 2000, category: "Philippine Fruits", unit: "ton" },
+  "Santol": { local: 480, intl: 600, category: "Philippine Fruits", unit: "ton" },
+  "Star Apple (Kaimito)": { local: 680, intl: 850, category: "Philippine Fruits", unit: "ton" },
+  "Atis (Sugar Apple)": { local: 750, intl: 940, category: "Philippine Fruits", unit: "ton" },
+  // Root Crops
+  "Ube (Purple Yam)": { local: 1800, intl: 2200, category: "Philippine Root Crops", unit: "ton" },
+  "Taro (Gabi)": { local: 560, intl: 700, category: "Philippine Root Crops", unit: "ton" },
+  // Herbs & Spices
+  "Lemongrass (Tanglad)": { local: 680, intl: 850, category: "Philippine Herbs & Spices", unit: "ton" },
+  "Basil (Balanoy)": { local: 820, intl: 1030, category: "Philippine Herbs & Spices", unit: "ton" },
+  // Legumes
+  "Mung Bean (Mungo)": { local: 780, intl: 980, category: "Philippine Legumes", unit: "ton" },
 };
 
 function deterministicJitter(crop: string, date: string, field: string): number {

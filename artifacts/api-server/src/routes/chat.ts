@@ -145,11 +145,13 @@ router.post("/chat/conversations/:id/messages", async (req, res) => {
   };
 
   if (!content?.trim()) {
-    return res.status(400).json({ error: "Message content is required" });
+    res.status(400).json({ error: "Message content is required" });
+    return;
   }
 
   if (!process.env.GROQ_API_KEY) {
-    return res.status(503).json({ error: "AI service not configured" });
+    res.status(503).json({ error: "AI service not configured" });
+    return;
   }
 
   try {
