@@ -4,10 +4,12 @@
  * All plans are generated using:
  *   1. Open-Meteo Historical Weather API — local GDD rates from real ERA5 reanalysis data
  *   2. Open-Meteo Forecast API — 16-day weather outlook
- *   3. Open-Meteo Geocoding API — coordinates from location name
- *   4. Wikipedia REST API — crop information
- *   5. World Bank Open Data API — country context
- *   6. GDD-based rule engine — scientifically grounded, no AI calls
+ *   3. Wikipedia REST API — crop information
+ *   4. World Bank Open Data API — country context
+ *   5. GDD-based rule engine — scientifically grounded, no AI calls
+ *
+ * PSGC STRICT MODE: location is resolved exclusively from PSGC codes.
+ * No free-text location is accepted. Missing PSGC data blocks plan generation.
  *
  * NO AI models, NO hardcoded timelines, NO paid or restricted APIs.
  * Plans are persisted in PostgreSQL to avoid redundant data fetches.
@@ -18,7 +20,6 @@ import { db } from "@workspace/db";
 import { farmingPlans } from "@workspace/db";
 import { and, eq, gt } from "drizzle-orm";
 import {
-  geocodeLocation,
   fetchHistoricalWeather,
   buildClimateProfile,
   fetchForecast,
@@ -30,12 +31,12 @@ import { generateFarmingPlan, listAvailableCrops } from "../lib/gdd-engine";
 
 const router = Router();
 
-const PLAN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days — recalculate when new data is available
+const PLAN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 /**
- * Check PostgreSQL for a cached plan that is still valid.
+ * Check PostgreSQL for a cached plan by PSGC code + crop + plantingDate.
  */
-async function getCachedPlan(crop: string, location: string, plantingDate: string) {
+async function getCachedPlan(crop: string, locationKey: string, plantingDate: string) {
   try {
     const rows = await db
       .select()
@@ -43,7 +44,7 @@ async function getCachedPlan(crop: string, location: string, plantingDate: strin
       .where(
         and(
           eq(farmingPlans.crop, crop.toLowerCase()),
-          eq(farmingPlans.location, location.toLowerCase()),
+          eq(farmingPlans.location, locationKey),
           eq(farmingPlans.plantingDate, plantingDate),
           gt(farmingPlans.expiresAt, new Date())
         )
@@ -56,11 +57,11 @@ async function getCachedPlan(crop: string, location: string, plantingDate: strin
 }
 
 /**
- * Persist a generated plan to PostgreSQL for future reuse.
+ * Persist a generated plan to PostgreSQL keyed by PSGC code.
  */
 async function savePlan(
   crop: string,
-  location: string,
+  locationKey: string,
   plantingDate: string,
   planData: any,
   climateProfile: any,
@@ -69,7 +70,7 @@ async function savePlan(
   try {
     await db.insert(farmingPlans).values({
       crop: crop.toLowerCase(),
-      location: location.toLowerCase(),
+      location: locationKey,
       plantingDate,
       planData,
       climateProfile,
@@ -84,60 +85,130 @@ async function savePlan(
 /**
  * POST /api/farming-plan/generate
  *
- * Generates a farming plan using open-source data only:
- *   - Historical climate data → local GDD rates
- *   - Forecast data → weather risk assessment
- *   - GDD rule engine → stage timings (no hardcoded day numbers)
- *   - Wikipedia API → crop info
- *   - World Bank API → country context
- *   - Results cached in PostgreSQL for 7 days
+ * PSGC-strict: requires regionCode + provinceCode. cityCode preferred.
+ * Rejects requests with missing PSGC location data.
+ *
+ * Body:
+ *   crop, plantingDate (required)
+ *   regionCode, provinceCode (required — PSGC)
+ *   cityCode, cityName, provinceName, regionName (from onboarding)
+ *   lat, lon (from PSGC geocoding, preferred over name-based geocoding)
  */
 router.post("/farming-plan/generate", async (req, res) => {
-  const { crop, plantingDate, location, lat, lon } = req.body as {
+  const {
+    crop,
+    plantingDate,
+    regionCode,
+    provinceCode,
+    cityCode,
+    cityName,
+    provinceName,
+    regionName,
+    lat,
+    lon,
+  } = req.body as {
     crop?: string;
     plantingDate?: string;
-    location?: string;
+    regionCode?: string;
+    provinceCode?: string;
+    cityCode?: string;
+    cityName?: string;
+    provinceName?: string;
+    regionName?: string;
     lat?: number | null;
     lon?: number | null;
   };
 
-  if (!crop || !plantingDate || !location) {
-    res.status(400).json({ error: "crop, plantingDate, and location are required" });
+  if (!crop || !plantingDate) {
+    res.status(400).json({ error: "crop and plantingDate are required" });
     return;
   }
 
+  // PSGC strict validation
+  if (!regionCode || !provinceCode) {
+    res.status(422).json({
+      error:
+        "PSGC location data is required. Please complete onboarding to set your region and province.",
+      code: "PSGC_MISSING",
+    });
+    return;
+  }
+
+  // Use PSGC code as stable cache key
+  const locationKey = cityCode || provinceCode;
+  const locationDisplay = [cityName, provinceName, regionName, "Philippines"]
+    .filter(Boolean)
+    .join(", ");
+
   try {
     // 1. Check PostgreSQL cache first
-    const cached = await getCachedPlan(crop, location, plantingDate);
+    const cached = await getCachedPlan(crop, locationKey, plantingDate);
     if (cached) {
-      req.log.info({ crop, location }, "Returning cached farming plan from PostgreSQL");
+      req.log.info({ crop, locationKey }, "Returning cached farming plan from PostgreSQL");
       return res.json({
         plan: cached.planData,
         weatherData: null,
         generatedAt: cached.generatedAt.toISOString(),
         cached: true,
         dataSourcesUsed: cached.dataSourcesUsed,
+        location: { display: locationDisplay, cityCode, provinceCode, regionCode },
       });
     }
 
-    // 2. Resolve coordinates from Open-Meteo Geocoding API (free, no key)
+    // 2. Resolve coordinates — prefer PSGC-geocoded lat/lon from onboarding
     let geo: GeoResult | null = null;
-    if (lat && lon) {
-      geo = { lat, lon, name: location, country: "", countryCode: "", elevation: 0, timezone: "UTC" };
+
+    if (lat != null && lon != null) {
+      geo = {
+        lat,
+        lon,
+        name: cityName || provinceName || regionName || "Philippines",
+        country: "Philippines",
+        countryCode: "PH",
+        elevation: 0,
+        timezone: "Asia/Manila",
+      };
     } else {
-      geo = await geocodeLocation(location);
+      // Fallback: geocode by name derived from PSGC labels
+      const searchTerm = [cityName, provinceName, "Philippines"].filter(Boolean).join(", ");
+      try {
+        const geoRes = await fetch(
+          `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(searchTerm)}&count=1&language=en&format=json`,
+          { signal: AbortSignal.timeout(8000) }
+        );
+        if (geoRes.ok) {
+          const geoData: any = await geoRes.json();
+          const r = geoData.results?.[0];
+          if (r) {
+            geo = {
+              lat: r.latitude,
+              lon: r.longitude,
+              name: r.name,
+              country: "Philippines",
+              countryCode: "PH",
+              elevation: r.elevation ?? 0,
+              timezone: r.timezone ?? "Asia/Manila",
+            };
+          }
+        }
+      } catch {
+        // Geocoding failed — continue, will error below
+      }
     }
 
     if (!geo) {
-      return res.status(422).json({ error: `Could not resolve location: "${location}". Try a more specific place name.` });
+      return res.status(422).json({
+        error: `Could not resolve coordinates for ${locationDisplay}. Ensure location coordinates are set during onboarding.`,
+        code: "GEOCODE_FAILED",
+      });
     }
 
-    // 3. Fetch all open data sources in parallel (no sequential blocking)
+    // 3. Fetch all open data sources in parallel
     const [historical, forecast, wikiInfo, countryCtx] = await Promise.allSettled([
-      fetchHistoricalWeather(geo.lat, geo.lon),         // Open-Meteo Historical (ERA5, free)
-      fetchForecast(geo.lat, geo.lon),                  // Open-Meteo Forecast (free)
-      fetchCropWikiInfo(crop),                          // Wikipedia REST API (free)
-      geo.countryCode ? fetchCountryContext(geo.countryCode) : Promise.resolve(null),  // World Bank (free)
+      fetchHistoricalWeather(geo.lat, geo.lon),
+      fetchForecast(geo.lat, geo.lon),
+      fetchCropWikiInfo(crop),
+      fetchCountryContext("PH"),
     ]);
 
     const historicalData = historical.status === "fulfilled" ? historical.value : null;
@@ -146,13 +217,21 @@ router.post("/farming-plan/generate", async (req, res) => {
     const country = countryCtx.status === "fulfilled" ? countryCtx.value : null;
 
     // 4. Build climate profile from historical weather
-    const climateProfile = buildClimateProfile(geo, historicalData ?? { dates: [], tempMax: [], tempMin: [], precipitation: [] });
+    const climateProfile = buildClimateProfile(
+      geo,
+      historicalData ?? { dates: [], tempMax: [], tempMin: [], precipitation: [] }
+    );
 
     // 5. Generate farming plan using GDD engine (rule-based, no AI)
-    const wikiExtract = wiki?.extract ?? null;
-    const plan = generateFarmingPlan(crop, plantingDate, location, climateProfile, forecastData, wikiExtract);
+    const plan = generateFarmingPlan(
+      crop,
+      plantingDate,
+      locationDisplay,
+      climateProfile,
+      forecastData,
+      wiki?.extract ?? null
+    );
 
-    // Add country context if available
     if (country) {
       (plan as any).countryContext = {
         name: country.name,
@@ -162,22 +241,39 @@ router.post("/farming-plan/generate", async (req, res) => {
       };
     }
 
-    // 6. Save to PostgreSQL for persistence (avoids refetching for 7 days)
-    await savePlan(crop, location, plantingDate, plan, climateProfile, plan.dataSourcesUsed);
+    // Embed PSGC location metadata in plan
+    (plan as any).psgcLocation = {
+      regionCode,
+      provinceCode,
+      cityCode: cityCode || null,
+      cityName: cityName || null,
+      provinceName: provinceName || null,
+      regionName: regionName || null,
+      display: locationDisplay,
+    };
+
+    // 6. Save to PostgreSQL
+    await savePlan(crop, locationKey, plantingDate, plan, climateProfile, plan.dataSourcesUsed);
 
     // 7. Build forecast response
-    const forecastResponse = forecastData.length > 0 ? {
-      daily: {
-        dates: forecastData.map(d => d.date),
-        maxTemps: forecastData.map(d => d.tempMax),
-        minTemps: forecastData.map(d => d.tempMin),
-        precipitation: forecastData.map(d => d.precipitation),
-        precipitationProbability: forecastData.map(d => d.precipProbability),
-        uvIndex: forecastData.map(d => d.uvIndex),
-      },
-    } : null;
+    const forecastResponse =
+      forecastData.length > 0
+        ? {
+            daily: {
+              dates: forecastData.map((d) => d.date),
+              maxTemps: forecastData.map((d) => d.tempMax),
+              minTemps: forecastData.map((d) => d.tempMin),
+              precipitation: forecastData.map((d) => d.precipitation),
+              precipitationProbability: forecastData.map((d) => d.precipProbability),
+              uvIndex: forecastData.map((d) => d.uvIndex),
+            },
+          }
+        : null;
 
-    req.log.info({ crop, location, totalDays: plan.totalGrowingDays, sources: plan.dataSourcesUsed.length }, "Generated farming plan from open data");
+    req.log.info(
+      { crop, cityCode, provinceCode, regionCode, totalDays: plan.totalGrowingDays },
+      "Generated farming plan from PSGC-bound location"
+    );
 
     res.json({
       plan,
@@ -185,6 +281,7 @@ router.post("/farming-plan/generate", async (req, res) => {
       generatedAt: new Date().toISOString(),
       cached: false,
       dataSourcesUsed: plan.dataSourcesUsed,
+      location: { display: locationDisplay, cityCode, provinceCode, regionCode },
     });
   } catch (err: any) {
     req.log.error({ err }, "Error generating farming plan");
@@ -194,9 +291,6 @@ router.post("/farming-plan/generate", async (req, res) => {
 
 /**
  * GET /api/farming-plan/crops
- *
- * Returns the list of supported crops with their GDD data sources.
- * All crop parameters are sourced from open agronomic literature.
  */
 router.get("/farming-plan/crops", (_req, res) => {
   res.json(listAvailableCrops());
@@ -204,8 +298,6 @@ router.get("/farming-plan/crops", (_req, res) => {
 
 /**
  * GET /api/farming-plan/data-sources
- *
- * Returns the list of open data sources used by this system.
  */
 router.get("/farming-plan/data-sources", (_req, res) => {
   res.json({
@@ -214,28 +306,28 @@ router.get("/farming-plan/data-sources", (_req, res) => {
       {
         name: "Open-Meteo Historical Weather API",
         url: "https://archive-api.open-meteo.com",
-        description: "ERA5 reanalysis data — 1-year historical daily weather for any location. Used to compute local GDD accumulation rates.",
+        description: "ERA5 reanalysis data — 1-year historical daily weather. Used for local GDD rates.",
         license: "CC BY 4.0",
         apiKey: false,
       },
       {
         name: "Open-Meteo Forecast API",
         url: "https://api.open-meteo.com",
-        description: "16-day weather forecast. Used for weather risk assessment.",
+        description: "16-day weather forecast for weather risk assessment.",
         license: "CC BY 4.0",
         apiKey: false,
       },
       {
-        name: "Open-Meteo Geocoding API",
-        url: "https://geocoding-api.open-meteo.com",
-        description: "Location name to coordinates. Free, no API key.",
-        license: "Open",
+        name: "PSGC (Philippine Standard Geographic Code)",
+        url: "https://psgc.gitlab.io/api",
+        description: "Official Philippine location codes. Farm location is locked to PSGC.",
+        license: "Open Government Data",
         apiKey: false,
       },
       {
         name: "Wikipedia REST API",
         url: "https://en.wikipedia.org/api/rest_v1",
-        description: "Crop information and descriptions. Fully open.",
+        description: "Crop information and descriptions.",
         license: "CC BY-SA 3.0",
         apiKey: false,
       },
@@ -247,17 +339,10 @@ router.get("/farming-plan/data-sources", (_req, res) => {
         apiKey: false,
       },
       {
-        name: "FAO Irrigation and Drainage Paper No. 56",
+        name: "FAO Paper No. 56 + GDD Crop Parameters",
         url: "https://www.fao.org/3/x0490e/x0490e00.htm",
-        description: "Scientific basis for ET₀ calculation (Hargreaves method) and crop coefficients.",
+        description: "Scientific basis for ET₀ calculation and crop coefficients from FAO, USDA, CIMMYT, IRRI.",
         license: "Open access",
-        apiKey: false,
-      },
-      {
-        name: "GDD Crop Parameters",
-        url: "https://www.fao.org",
-        description: "Crop base temperatures and GDD phase thresholds from FAO Paper 56, USDA Agronomy Handbook, CIMMYT, IRRI, CIP, and ICRISAT open-access publications.",
-        license: "Open access scientific literature",
         apiKey: false,
       },
     ],

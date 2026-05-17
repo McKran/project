@@ -1,6 +1,6 @@
 import { memo } from "react";
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, CloudSun, Sprout, TrendingUp, ClipboardList, MapPin, Settings, Menu, X } from "lucide-react";
+import { LayoutDashboard, CloudSun, Sprout, TrendingUp, ClipboardList, MapPin, Settings, Menu, X, MessageSquare } from "lucide-react";
 import { useLocationStore } from "@/hooks/use-location";
 import { useSettings } from "@/hooks/use-settings";
 import { COUNTRIES } from "@/lib/country-data";
@@ -13,6 +13,7 @@ const NAV_ITEMS = [
   { href: "/crops", icon: Sprout, label: "Crops" },
   { href: "/market", icon: TrendingUp, label: "Market" },
   { href: "/farming-plan", icon: ClipboardList, label: "Farming Plan" },
+  { href: "/chat", icon: MessageSquare, label: "AI Chat" },
   { href: "/settings", icon: Settings, label: "Settings" },
 ] as const;
 

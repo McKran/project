@@ -33,7 +33,7 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "PORT=8080 pnpm --filter @workspace/api-server run dev"
+args = "bash scripts/start-api-server.sh"
 waitForPort = 8080
 
 [[workflows.workflow]]
@@ -58,20 +58,21 @@ path = "scripts/post-merge.sh"
 timeoutMs = 20000
 
 [[ports]]
+localPort = 5000
+externalPort = 80
+
+[[ports]]
 localPort = 8080
 externalPort = 8080
 
 [[ports]]
-localPort = 8081
-externalPort = 80
+localPort = 11434
+externalPort = 3002
+exposeLocalhost = true
 
 [[ports]]
 localPort = 22500
 externalPort = 3000
-
-[[ports]]
-localPort = 5000
-externalPort = 80
 
 [nix]
 channel = "stable-25_05"

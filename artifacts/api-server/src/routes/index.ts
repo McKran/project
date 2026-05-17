@@ -8,6 +8,7 @@ import dashboardRouter from "./dashboard";
 import farmingPlanRouter from "./farming-plan";
 import geoRouter from "./geo";
 import psgcRouter from "./psgc";
+import chatRouter from "./chat";
 
 const router: IRouter = Router();
 
@@ -20,5 +21,6 @@ router.use(dashboardRouter);
 router.use(farmingPlanRouter);
 router.use(geoRouter);
 router.use(psgcRouter);
+router.use(chatRouter);
 
 export default router;
