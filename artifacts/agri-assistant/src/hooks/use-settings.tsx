@@ -1,40 +1,48 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
 import type { WeightUnit, TargetMarket } from "@/lib/country-data";
-import { getCountryByCode, convertFromTon, convertCurrency, getCurrencySymbol } from "@/lib/country-data";
+import { convertFromTon, convertCurrency, getCurrencySymbol } from "@/lib/country-data";
 
 export type { WeightUnit, TargetMarket };
 
 export interface AppSettings {
   onboardingCompleted: boolean;
   countryCode: string;
+  regionCode: string;
   regionName: string;
-  stateName: string;
+  provinceCode: string;
+  provinceName: string;
+  cityCode: string;
   cityName: string;
   cityLat: number | null;
   cityLon: number | null;
   currency: string;
   weightUnit: WeightUnit;
   preferredCrops: string[];
+  preferredCropIds: number[];
   targetMarket: TargetMarket;
   theme: "light" | "dark" | "system";
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
-  onboardingCompleted: true,
+  onboardingCompleted: false,
   countryCode: "PH",
+  regionCode: "",
   regionName: "",
-  stateName: "",
+  provinceCode: "",
+  provinceName: "",
+  cityCode: "",
   cityName: "",
   cityLat: null,
   cityLon: null,
   currency: "PHP",
   weightUnit: "kilogram",
   preferredCrops: [],
+  preferredCropIds: [],
   targetMarket: "local",
   theme: "system",
 };
 
-const STORAGE_KEY = "agri_settings_v5";
+const STORAGE_KEY = "agri_settings_v6";
 
 function loadSettings(): AppSettings {
   try {
@@ -73,17 +81,13 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       const next = { ...prev, ...partial };
       saveSettings(next);
       if (partial.theme) applyTheme(partial.theme);
-      if (partial.countryCode) {
-        const country = getCountryByCode(partial.countryCode);
-        if (country) next.currency = country.currency;
-      }
       return next;
     });
   };
 
   const completeOnboarding = (data: Partial<AppSettings>) => {
     setSettings(prev => {
-      const next = { ...prev, ...data, onboardingCompleted: true };
+      const next = { ...prev, ...data, onboardingCompleted: true, countryCode: "PH", currency: "PHP" };
       saveSettings(next);
       return next;
     });
@@ -97,7 +101,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     });
   };
 
-  const currencySymbol = getCurrencySymbol(settings.currency);
+  const currencySymbol = "₱";
 
   const unitLabel = settings.weightUnit === "gram"
     ? "g"
@@ -106,19 +110,18 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     : "MT";
 
   const formatPrice = (usdPricePerTon: number): string => {
-    const converted = convertCurrency(convertFromTon(usdPricePerTon, settings.weightUnit), settings.currency);
-    const formatted = new Intl.NumberFormat("en-US", {
+    const converted = convertCurrency(convertFromTon(usdPricePerTon, settings.weightUnit), "PHP");
+    const formatted = new Intl.NumberFormat("en-PH", {
       minimumFractionDigits: converted < 1 ? 4 : 0,
       maximumFractionDigits: converted < 1 ? 4 : 2,
     }).format(converted);
-    return `${currencySymbol}${formatted}`;
+    return `₱${formatted}`;
   };
 
-  const country = getCountryByCode(settings.countryCode);
   const parts = [
     settings.cityName,
-    settings.stateName || settings.regionName,
-    country?.name,
+    settings.provinceName || settings.regionName,
+    "Philippines",
   ].filter(Boolean);
   const fullLocationLabel = parts.join(", ");
 

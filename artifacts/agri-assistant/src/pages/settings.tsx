@@ -135,7 +135,7 @@ export default function Settings() {
           control={
             <Input
               value={settings.regionName ?? ""}
-              onChange={(e) => updateSettings({ regionName: e.target.value, stateName: e.target.value })}
+              onChange={(e) => updateSettings({ regionName: e.target.value })}
               className="h-8 w-36 text-right border-transparent bg-muted/50 focus-visible:bg-background text-sm"
               placeholder="Enter region..."
             />

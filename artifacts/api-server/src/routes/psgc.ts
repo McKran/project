@@ -54,14 +54,43 @@ router.get("/psgc/regions", async (req, res) => {
   }
 });
 
-router.get("/psgc/cities", async (req, res) => {
+router.get("/psgc/provinces", async (req, res) => {
   const regionCode = (req.query.region_code as string ?? "").trim();
   if (!regionCode) {
     res.status(400).json({ error: "region_code is required" });
     return;
   }
   try {
-    const raw: any[] = await fetchPSGC(`/regions/${regionCode}/cities-municipalities/`);
+    const raw: any[] = await fetchPSGC(`/regions/${regionCode}/provinces/`);
+    const provinces = raw
+      .map(p => ({
+        code: p.code,
+        name: p.name,
+        regionCode: p.regionCode ?? regionCode,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    res.json(provinces);
+  } catch (err) {
+    req.log.error({ err }, "PSGC provinces fetch error");
+    res.status(500).json({ error: "Failed to fetch provinces from PSGC" });
+  }
+});
+
+router.get("/psgc/cities", async (req, res) => {
+  const regionCode = (req.query.region_code as string ?? "").trim();
+  const provinceCode = (req.query.province_code as string ?? "").trim();
+
+  if (!regionCode && !provinceCode) {
+    res.status(400).json({ error: "region_code or province_code is required" });
+    return;
+  }
+  try {
+    let raw: any[];
+    if (provinceCode) {
+      raw = await fetchPSGC(`/provinces/${provinceCode}/cities-municipalities/`);
+    } else {
+      raw = await fetchPSGC(`/regions/${regionCode}/cities-municipalities/`);
+    }
     const cities = raw
       .map(c => ({
         code: c.code,
