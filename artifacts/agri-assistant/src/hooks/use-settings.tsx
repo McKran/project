@@ -20,7 +20,7 @@ export interface AppSettings {
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
-  onboardingCompleted: false,
+  onboardingCompleted: true,
   countryCode: "PH",
   regionName: "",
   stateName: "",

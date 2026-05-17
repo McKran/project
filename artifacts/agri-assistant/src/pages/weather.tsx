@@ -110,13 +110,13 @@ export default function Weather() {
           ) : advice ? (
             <>
               <p className="text-muted-foreground leading-relaxed">{advice.advice}</p>
-              {(advice.urgentAlerts.length > 0 || advice.recommendations.length > 0) && (
+              {((advice.urgentAlerts?.length ?? 0) > 0 || (advice.recommendations?.length ?? 0) > 0) && (
                 <div className="mt-6 grid sm:grid-cols-2 gap-6">
-                  {advice.urgentAlerts.length > 0 && (
+                  {(advice.urgentAlerts?.length ?? 0) > 0 && (
                     <div>
                       <h4 className="text-sm font-bold text-destructive uppercase tracking-wider mb-3">Critical Actions</h4>
                       <ul className="space-y-2">
-                        {advice.urgentAlerts.map((alert, i) => (
+                        {(advice.urgentAlerts ?? []).map((alert, i) => (
                           <li key={i} className="flex items-start gap-2 text-sm text-destructive/90 bg-destructive/5 p-3 rounded-lg">
                             <span className="shrink-0 h-2 w-2 rounded-full bg-destructive mt-1.5" />
                             <span>{alert}</span>
@@ -125,11 +125,11 @@ export default function Weather() {
                       </ul>
                     </div>
                   )}
-                  {advice.recommendations.length > 0 && (
+                  {(advice.recommendations?.length ?? 0) > 0 && (
                     <div>
                       <h4 className="text-sm font-bold text-primary uppercase tracking-wider mb-3">Recommendations</h4>
                       <ul className="space-y-2">
-                        {advice.recommendations.map((rec, i) => (
+                        {(advice.recommendations ?? []).map((rec, i) => (
                           <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground bg-muted/30 p-3 rounded-lg">
                             <span className="shrink-0 h-2 w-2 rounded-full bg-primary mt-1.5" />
                             <span>{rec}</span>
